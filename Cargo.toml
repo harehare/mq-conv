@@ -1,0 +1,73 @@
+[package]
+name = "mq-conv"
+version = "0.1.0"
+edition = "2024"
+authors = ["Takahiro Sato <harehare1110@gmail.com>"]
+description = "A CLI tool for converting various file formats to Markdown"
+license = "MIT"
+repository = "https://github.com/harehare/mq-conv"
+homepage = "https://mqlang.org/"
+readme = "README.md"
+keywords = ["markdown", "converter", "cli"]
+categories = ["command-line-utilities", "text-processing"]
+
+[[bin]]
+name = "mq-conv"
+path = "src/main.rs"
+
+[lib]
+name = "mq_conv"
+path = "src/lib.rs"
+
+[features]
+default = ["excel", "pdf", "powerpoint", "word", "image", "zip", "epub", "audio", "csv", "html", "json", "yaml", "toml_conv", "xml", "sqlite", "tar", "video"]
+excel = ["dep:calamine"]
+pdf = ["dep:pdf-extract", "dep:lopdf"]
+powerpoint = ["dep:zip", "dep:quick-xml"]
+word = ["dep:zip", "dep:quick-xml"]
+image = ["dep:image", "dep:kamadak-exif"]
+zip = ["dep:zip"]
+epub = ["dep:zip", "dep:quick-xml", "dep:mq-markdown"]
+audio = ["dep:lofty"]
+csv = ["dep:csv"]
+html = ["dep:mq-markdown"]
+json = ["dep:serde_json"]
+yaml = ["dep:serde_yaml"]
+toml_conv = ["dep:toml"]
+xml = ["dep:quick-xml"]
+sqlite = ["dep:rusqlite"]
+tar = ["dep:tar", "dep:flate2"]
+video = ["dep:lofty"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+
+calamine = { version = "0.33", optional = true }
+pdf-extract = { version = "0.10", optional = true }
+lopdf = { version = "0.38", optional = true }
+quick-xml = { version = "0.39", optional = true }
+zip = { version = "7.4", optional = true, default-features = false, features = ["deflate"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+kamadak-exif = { version = "0.6", optional = true }
+mq-markdown = { version = "0.5.14", optional = true, features = ["html-to-markdown"] }
+lofty = { version = "0.23", optional = true }
+csv = { version = "1", optional = true }
+serde_json = { version = "1", optional = true, features = ["preserve_order"] }
+serde_yaml = { version = "0.9", optional = true }
+toml = { version = "0.8", optional = true }
+rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
+tar = { version = "0.4", optional = true }
+flate2 = { version = "1", optional = true }
+
+[dev-dependencies]
+rstest = "0.25"
+pretty_assertions = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+strip = true

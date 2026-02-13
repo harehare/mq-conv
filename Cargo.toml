@@ -57,7 +57,7 @@ csv = { version = "1", optional = true }
 serde_json = { version = "1", optional = true, features = ["preserve_order"] }
 serde_yaml = { version = "0.9", optional = true }
 toml = { version = "0.8", optional = true }
-rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
+rusqlite = { version = "0.38", optional = true, features = ["bundled"] }
 tar = { version = "0.4", optional = true }
 flate2 = { version = "1", optional = true }
 

@@ -62,7 +62,7 @@ tar = { version = "0.4", optional = true }
 flate2 = { version = "1", optional = true }
 
 [dev-dependencies]
-rstest = "0.25"
+rstest = "0.26"
 pretty_assertions = "1"
 
 [profile.release]

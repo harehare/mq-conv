@@ -3,11 +3,7 @@
 [![ci](https://github.com/harehare/mq-conv/actions/workflows/ci.yml/badge.svg)](https://github.com/harehare/mq-conv/actions/workflows/ci.yml)
 [![mq language](https://img.shields.io/badge/mq-language-orange.svg)](https://github.com/harehare/mq)
 
-<div align="center">
-
 A CLI tool for converting various file formats to Markdown
-
-</div>
 
 ## Overview
 

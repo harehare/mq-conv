@@ -3,11 +3,7 @@
 [![ci](https://github.com/harehare/mq-conv/actions/workflows/ci.yml/badge.svg)](https://github.com/harehare/mq-conv/actions/workflows/ci.yml)
 [![mq language](https://img.shields.io/badge/mq-language-orange.svg)](https://github.com/harehare/mq)
 
-<div align="center">
-
 A CLI tool for converting various file formats to Markdown
-
-</div>
 
 ## Overview
 
@@ -22,11 +18,35 @@ A CLI tool for converting various file formats to Markdown
 
 ## Installation
 
+### Using the Installation Script (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/harehare/mq-conv/main/bin/install.sh | bash
+```
+
+The installer will:
+- Download the latest release for your platform
+- Verify the binary with SHA256 checksum
+- Install to `~/.mq-conv/bin/`
+- Update your shell profile (bash, zsh, or fish)
+
+After installation, restart your terminal or run:
+```bash
+source ~/.bashrc  # or ~/.zshrc, or ~/.config/fish/config.fish
+```
+
+### Cargo
+
 ```bash
 # Install from crates.io
 cargo install mq-conv
+# Install using binstall
+cargo binstall mq-conv@0.1.0
+```
 
-# Install from source
+### From Source
+
+```bash
 git clone https://github.com/harehare/mq-conv.git
 cd mq-conv
 cargo build --release
@@ -52,10 +72,10 @@ cat input.json | mq-conv --format json
 
 ```bash
 # Convert a PDF and query headings
-mq-conv document.pdf | mq '.h'
+mq conv document.pdf | mq '.h'
 
 # Convert Excel and filter content
-mq-conv data.xlsx | mq '.table'
+mq conv data.xlsx | mq '.table'
 ```
 
 ## Supported Formats

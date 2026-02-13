@@ -338,7 +338,7 @@ mod tests {
     #[case::bool_true(Value::Bool(true), "true\n")]
     #[case::bool_false(Value::Bool(false), "false\n")]
     #[case::integer(Value::Integer(42), "42\n")]
-    #[case::float(Value::Float(f64::consts::PI), "3.14\n")]
+    #[case::float(Value::Float(f64::consts::PI), "3.141592653589793\n")]
     #[case::string(Value::String("hello".into()), "hello\n")]
     fn test_primitive_values(#[case] value: Value, #[case] expected: &str) {
         assert_eq!(render(value), expected);

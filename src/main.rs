@@ -42,6 +42,8 @@ enum FormatArg {
     Sqlite,
     Tar,
     Video,
+    Ocr,
+    MarkdownDocx,
 }
 
 impl From<FormatArg> for Format {
@@ -64,6 +66,8 @@ impl From<FormatArg> for Format {
             FormatArg::Sqlite => Format::Sqlite,
             FormatArg::Tar => Format::Tar,
             FormatArg::Video => Format::Video,
+            FormatArg::Ocr => Format::Ocr,
+            FormatArg::MarkdownDocx => Format::MarkdownDocx,
         }
     }
 }
@@ -107,7 +111,7 @@ fn main() -> miette::Result<()> {
         convert_one(&buf, None, args.format.as_ref(), &mut writer)?;
         writer.flush().into_diagnostic()?;
     } else if let Some(ref output_dir) = args.output_dir {
-        // Output each file as individual .md file
+        // Output each file as individual output file
         fs::create_dir_all(output_dir).into_diagnostic()?;
 
         for path in &args.files {
@@ -118,16 +122,25 @@ fn main() -> miette::Result<()> {
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "output".to_string());
-            let out_path = output_dir.join(format!("{stem}.md"));
+
+            let format = if let Some(f) = args.format.as_ref() {
+                f.clone().into()
+            } else {
+                Format::detect(filename.as_deref(), &input).ok_or_else(|| {
+                    miette::miette!("Could not detect file format. Use --format to specify.")
+                })?
+            };
+
+            let converter =
+                mq_conv::formats::get_converter(format).map_err(|e| miette::miette!("{e}"))?;
+            let ext = converter.output_extension();
+            let out_path = output_dir.join(format!("{stem}.{ext}"));
 
             let file = fs::File::create(&out_path).into_diagnostic()?;
             let mut writer = BufWriter::new(file);
-            convert_one(
-                &input,
-                filename.as_deref(),
-                args.format.as_ref(),
-                &mut writer,
-            )?;
+            converter
+                .convert(&input, &mut writer)
+                .map_err(|e| miette::miette!("{e}"))?;
             writer.flush().into_diagnostic()?;
         }
     } else {

@@ -12,7 +12,9 @@ A CLI tool for converting various file formats to Markdown
 ### Key Features
 
 - **Automatic Format Detection** - Detects file formats by extension and magic bytes
-- **16+ Supported Formats** - Documents, data, media, and archives
+- **18+ Supported Formats** - Documents, data, media, and archives
+- **Image OCR** - Extract text from images using Tesseract OCR
+- **Markdown to Word** - Convert Markdown documents to `.docx` format
 - **Stdin Support** - Pipe data directly from other commands
 - **Modular Architecture** - Enable only the formats you need via feature flags
 
@@ -31,6 +33,7 @@ The installer will:
 - Update your shell profile (bash, zsh, or fish)
 
 After installation, restart your terminal or run:
+
 ```bash
 source ~/.bashrc  # or ~/.zshrc, or ~/.config/fish/config.fish
 ```
@@ -82,13 +85,14 @@ mq conv data.xlsx | mq '.table'
 
 ### Documents
 
-| Format     | Extensions |
-| ---------- | ---------- |
-| Word       | `.docx`    |
-| PowerPoint | `.pptx`    |
-| PDF        | `.pdf`     |
-| EPUB       | `.epub`    |
-| HTML       | `.html`    |
+| Format          | Extensions         |
+| --------------- | ------------------ |
+| Word            | `.docx`            |
+| PowerPoint      | `.pptx`            |
+| PDF             | `.pdf`             |
+| EPUB            | `.epub`            |
+| HTML            | `.html`            |
+| Markdown → Word | `.md`, `.markdown` |
 
 ### Spreadsheets
 
@@ -112,6 +116,7 @@ mq conv data.xlsx | mq '.table'
 | Format | Extensions                                                        |
 | ------ | ----------------------------------------------------------------- |
 | Image  | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`, `.tiff` |
+| OCR    | any image (use `--format ocr`)                                    |
 | Audio  | `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.wma`           |
 | Video  | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.m4v`, `.wmv`, `.flv`   |
 
@@ -138,7 +143,33 @@ Options:
 
 ### Available Format Values
 
-`excel`, `pdf`, `powerpoint`, `word`, `image`, `zip`, `epub`, `audio`, `csv`, `html`, `json`, `yaml`, `toml`, `xml`, `sqlite`, `tar`, `video`
+`excel`, `pdf`, `powerpoint`, `word`, `image`, `zip`, `epub`, `audio`, `csv`, `html`, `json`, `yaml`, `toml`, `xml`, `sqlite`, `tar`, `video`, `ocr`, `markdown-docx`
+
+### OCR Requirements
+
+The `ocr` feature requires Tesseract to be installed on your system:
+
+```bash
+# macOS
+brew install tesseract
+
+# Ubuntu/Debian
+sudo apt install tesseract-ocr
+
+# Arch Linux
+sudo pacman -S tesseract
+```
+
+Usage:
+
+```bash
+# OCR an image to Markdown
+mq-conv photo.png --format ocr
+
+# Convert Markdown to Word docx
+mq-conv document.md
+mq-conv document.md --output-dir ./out  # creates document.docx
+```
 
 ## Related Projects
 

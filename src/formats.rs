@@ -15,6 +15,10 @@ pub mod html;
 pub mod image;
 #[cfg(feature = "json")]
 pub mod json;
+#[cfg(feature = "markdown_docx")]
+pub mod markdown_docx;
+#[cfg(feature = "ocr")]
+pub mod ocr;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 #[cfg(feature = "powerpoint")]
@@ -125,5 +129,15 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::Video => Ok(Box::new(video::VideoConverter)),
         #[cfg(not(feature = "video"))]
         Format::Video => Err(crate::error::Error::FeatureDisabled("video".into())),
+
+        #[cfg(feature = "ocr")]
+        Format::Ocr => Ok(Box::new(ocr::OcrConverter)),
+        #[cfg(not(feature = "ocr"))]
+        Format::Ocr => Err(crate::error::Error::FeatureDisabled("ocr".into())),
+
+        #[cfg(feature = "markdown_docx")]
+        Format::MarkdownDocx => Ok(Box::new(markdown_docx::MarkdownDocxConverter)),
+        #[cfg(not(feature = "markdown_docx"))]
+        Format::MarkdownDocx => Err(crate::error::Error::FeatureDisabled("markdown-docx".into())),
     }
 }

@@ -19,6 +19,8 @@ pub enum Format {
     Sqlite,
     Tar,
     Video,
+    Ocr,
+    MarkdownDocx,
 }
 
 impl Format {
@@ -59,6 +61,7 @@ impl Format {
             "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "flv" => {
                 Some(Self::Video)
             }
+            "md" | "markdown" => Some(Self::MarkdownDocx),
             _ => None,
         }
     }
@@ -215,6 +218,8 @@ impl std::fmt::Display for Format {
             Self::Sqlite => write!(f, "sqlite"),
             Self::Tar => write!(f, "tar"),
             Self::Video => write!(f, "video"),
+            Self::Ocr => write!(f, "ocr"),
+            Self::MarkdownDocx => write!(f, "markdown-docx"),
         }
     }
 }

@@ -46,7 +46,7 @@ clap = { version = "4.5", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 
-calamine = { version = "0.33", optional = true }
+calamine = { version = "0.34", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 lopdf = { version = "0.39", optional = true }
 quick-xml = { version = "0.39", optional = true }

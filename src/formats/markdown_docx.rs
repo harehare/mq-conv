@@ -2,8 +2,7 @@ use std::io::{Cursor, Write};
 
 use docx_rs::{
     AbstractNumbering, AlignmentType, Docx, IndentLevel, Level, LevelJc, LevelText, NumberFormat,
-    NumberingId, Paragraph, Run, Start,
-    Table, TableRow, Numbering,
+    Numbering, NumberingId, Paragraph, Run, Start, Table, TableRow,
 };
 use mq_markdown::{Markdown, Node};
 
@@ -33,12 +32,10 @@ impl Converter for MarkdownDocxConverter {
         })?;
 
         let mut buf = Cursor::new(Vec::new());
-        doc.build()
-            .pack(&mut buf)
-            .map_err(|e| Error::Conversion {
-                format: "markdown-docx",
-                message: format!("Failed to generate docx: {e}"),
-            })?;
+        doc.build().pack(&mut buf).map_err(|e| Error::Conversion {
+            format: "markdown-docx",
+            message: format!("Failed to generate docx: {e}"),
+        })?;
 
         writer.write_all(buf.get_ref())?;
         Ok(())
@@ -129,9 +126,8 @@ fn flush_table(doc: Docx, table_data: &mut Vec<(usize, usize, String)>) -> Docx 
             if row_idx == 0 {
                 run = run.bold();
             }
-            let cell = docx_rs::TableCell::new().add_paragraph(
-                Paragraph::new().align(AlignmentType::Left).add_run(run),
-            );
+            let cell = docx_rs::TableCell::new()
+                .add_paragraph(Paragraph::new().align(AlignmentType::Left).add_run(run));
             cells.push(cell);
         }
         table = table.add_row(TableRow::new(cells));
@@ -152,7 +148,12 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
             LevelText::new("•"),
             LevelJc::new("left"),
         )
-        .indent(Some(720), Some(docx_rs::SpecialIndentType::Hanging(360)), None, None),
+        .indent(
+            Some(720),
+            Some(docx_rs::SpecialIndentType::Hanging(360)),
+            None,
+            None,
+        ),
     );
     doc = doc.add_abstract_numbering(abstract_numbering);
     doc = doc.add_numbering(Numbering::new(1, 0));
@@ -272,11 +273,11 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
             | Node::Delete(_) => {
                 in_ordered_list = false;
                 ordered_item_count = 0;
-                if let Some(pos) = node.position() {
-                    if let Some(end) = prev_end_line {
-                        if pos.start.line > end + 1 {
-                            doc = flush_inline_runs(doc, &mut inline_runs);
-                        }
+                if let Some(pos) = node.position()
+                    && let Some(end) = prev_end_line
+                {
+                    if pos.start.line > end + 1 {
+                        doc = flush_inline_runs(doc, &mut inline_runs);
                     }
                     prev_end_line = Some(pos.end.line);
                 }

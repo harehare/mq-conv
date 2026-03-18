@@ -74,7 +74,7 @@ kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.23", optional = true}
 lopdf = {version = "0.38", optional = true}
-mq-markdown = {version = "0.5.19", optional = true, features = ["html-to-markdown"]}
+mq-markdown = {version = "0.5.20", optional = true, features = ["html-to-markdown"]}
 pdf-extract = {version = "0.10", optional = true}
 quick-xml = {version = "0.39", optional = true}
 rusqlite = {version = "0.39", optional = true, features = ["bundled"]}

@@ -1200,6 +1200,34 @@ dependencies = [
  "aes",
  "bitflags 2.10.0",
  "cbc",
+ "ecb",
+ "encoding_rs",
+ "flate2",
+ "getrandom",
+ "indexmap",
+ "itoa",
+ "log",
+ "md-5",
+ "nom 8.0.0",
+ "nom_locate",
+ "rand",
+ "rangemap",
+ "sha2",
+ "stringprep",
+ "thiserror 2.0.18",
+ "ttf-parser",
+ "weezl",
+]
+
+[[package]]
+name = "lopdf"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f560f57dfb9142a02d673e137622fd515d4231e51feb8b4af28d92647d83f35b"
+dependencies = [
+ "aes",
+ "bitflags 2.10.0",
+ "cbc",
  "chrono",
  "ecb",
  "encoding_rs",
@@ -1334,7 +1362,7 @@ dependencies = [
  "kamadak-exif",
  "leptess",
  "lofty",
- "lopdf",
+ "lopdf 0.39.0",
  "miette",
  "mq-markdown",
  "pdf-extract",
@@ -1499,7 +1527,7 @@ dependencies = [
  "encoding_rs",
  "euclid",
  "log",
- "lopdf",
+ "lopdf 0.38.0",
  "postscript",
  "type1-encoding-parser",
  "unicode-normalization",

@@ -1,7 +1,9 @@
 use std::io::Write;
 
 use lopdf::Document;
-use pdf_extract::{output_doc, ColorSpace, MediaBox, OutputDev, OutputError, Path, PathOp, Transform};
+use pdf_extract::{
+    ColorSpace, MediaBox, OutputDev, OutputError, Path, PathOp, Transform, output_doc,
+};
 
 use crate::converter::Converter;
 use crate::error::{Error, Result};
@@ -264,11 +266,11 @@ fn build_lines(mut words: Vec<Word>) -> Vec<TextLine> {
 
     let mut lines: Vec<TextLine> = Vec::new();
     for word in words {
-        if let Some(last) = lines.last_mut() {
-            if (word.y - last.y).abs() < 3.0 {
-                last.words.push(word);
-                continue;
-            }
+        if let Some(last) = lines.last_mut()
+            && (word.y - last.y).abs() < 3.0
+        {
+            last.words.push(word);
+            continue;
         }
         lines.push(TextLine {
             y: word.y,
@@ -301,7 +303,10 @@ fn nearest_col(x: f64, cols: &[f64]) -> usize {
     cols.iter()
         .enumerate()
         .min_by(|&(_, a), &(_, b)| {
-            (x - a).abs().partial_cmp(&(x - b).abs()).unwrap_or(std::cmp::Ordering::Equal)
+            (x - a)
+                .abs()
+                .partial_cmp(&(x - b).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
         .map(|(i, _)| i)
         .unwrap_or(0)
@@ -687,7 +692,7 @@ fn pdf_object_to_string(obj: &lopdf::Object) -> String {
 
 fn is_heading_candidate(line: &str) -> bool {
     let len = line.len();
-    if len < 2 || len > 80 {
+    if !(2..=80).contains(&len) {
         return false;
     }
     let last = line.chars().last().unwrap();

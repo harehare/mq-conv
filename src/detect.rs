@@ -21,6 +21,14 @@ pub enum Format {
     Video,
     Ocr,
     MarkdownDocx,
+    MarkdownHtml,
+    MarkdownText,
+    MarkdownLatex,
+    MarkdownRst,
+    MarkdownAsciidoc,
+    MarkdownOrg,
+    MarkdownEpub,
+    MarkdownJsonAst,
 }
 
 impl Format {
@@ -220,6 +228,14 @@ impl std::fmt::Display for Format {
             Self::Video => write!(f, "video"),
             Self::Ocr => write!(f, "ocr"),
             Self::MarkdownDocx => write!(f, "markdown-docx"),
+            Self::MarkdownHtml => write!(f, "markdown-html"),
+            Self::MarkdownText => write!(f, "markdown-text"),
+            Self::MarkdownLatex => write!(f, "markdown-latex"),
+            Self::MarkdownRst => write!(f, "markdown-rst"),
+            Self::MarkdownAsciidoc => write!(f, "markdown-asciidoc"),
+            Self::MarkdownOrg => write!(f, "markdown-org"),
+            Self::MarkdownEpub => write!(f, "markdown-epub"),
+            Self::MarkdownJsonAst => write!(f, "markdown-json-ast"),
         }
     }
 }

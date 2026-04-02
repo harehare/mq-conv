@@ -41,6 +41,14 @@ default = [
   "tar",
   "video",
   "markdown_docx",
+  "markdown_html",
+  "markdown_text",
+  "markdown_latex",
+  "markdown_rst",
+  "markdown_asciidoc",
+  "markdown_org",
+  "markdown_epub_out",
+  "markdown_json_ast",
 ]
 epub = ["dep:zip", "dep:quick-xml", "dep:mq-markdown"]
 excel = ["dep:calamine"]
@@ -48,6 +56,14 @@ html = ["dep:mq-markdown"]
 image = ["dep:image", "dep:kamadak-exif"]
 json = ["dep:serde_json"]
 markdown_docx = ["dep:docx-rs", "dep:mq-markdown"]
+markdown_html = ["dep:mq-markdown"]
+markdown_text = ["dep:mq-markdown"]
+markdown_latex = ["dep:mq-markdown"]
+markdown_rst = ["dep:mq-markdown"]
+markdown_asciidoc = ["dep:mq-markdown"]
+markdown_org = ["dep:mq-markdown"]
+markdown_epub_out = ["dep:epub-builder", "dep:mq-markdown"]
+markdown_json_ast = ["dep:serde_json", "dep:mq-markdown"]
 ocr = ["dep:leptess"]
 pdf = ["dep:pdf-extract", "dep:lopdf"]
 powerpoint = ["dep:zip", "dep:quick-xml"]
@@ -74,7 +90,8 @@ kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.23", optional = true}
 lopdf = {version = "0.38", optional = true}
-mq-markdown = {version = "0.5.24", optional = true, features = ["html-to-markdown"]}
+epub-builder = {version = "0.7", optional = true}
+mq-markdown = {version = "0.5.24", optional = true, features = ["html-to-markdown", "json"]}
 pdf-extract = {version = "0.10", optional = true}
 quick-xml = {version = "0.39", optional = true}
 rusqlite = {version = "0.39", optional = true, features = ["bundled"]}

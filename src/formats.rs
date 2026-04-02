@@ -17,6 +17,22 @@ pub mod image;
 pub mod json;
 #[cfg(feature = "markdown_docx")]
 pub mod markdown_docx;
+#[cfg(feature = "markdown_html")]
+pub mod markdown_html;
+#[cfg(feature = "markdown_text")]
+pub mod markdown_text;
+#[cfg(feature = "markdown_latex")]
+pub mod markdown_latex;
+#[cfg(feature = "markdown_rst")]
+pub mod markdown_rst;
+#[cfg(feature = "markdown_asciidoc")]
+pub mod markdown_asciidoc;
+#[cfg(feature = "markdown_org")]
+pub mod markdown_org;
+#[cfg(feature = "markdown_epub_out")]
+pub mod markdown_epub_out;
+#[cfg(feature = "markdown_json_ast")]
+pub mod markdown_json_ast;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 #[cfg(feature = "pdf")]
@@ -139,5 +155,45 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::MarkdownDocx => Ok(Box::new(markdown_docx::MarkdownDocxConverter)),
         #[cfg(not(feature = "markdown_docx"))]
         Format::MarkdownDocx => Err(crate::error::Error::FeatureDisabled("markdown-docx".into())),
+
+        #[cfg(feature = "markdown_html")]
+        Format::MarkdownHtml => Ok(Box::new(markdown_html::MarkdownHtmlConverter)),
+        #[cfg(not(feature = "markdown_html"))]
+        Format::MarkdownHtml => Err(crate::error::Error::FeatureDisabled("markdown-html".into())),
+
+        #[cfg(feature = "markdown_text")]
+        Format::MarkdownText => Ok(Box::new(markdown_text::MarkdownTextConverter)),
+        #[cfg(not(feature = "markdown_text"))]
+        Format::MarkdownText => Err(crate::error::Error::FeatureDisabled("markdown-text".into())),
+
+        #[cfg(feature = "markdown_latex")]
+        Format::MarkdownLatex => Ok(Box::new(markdown_latex::MarkdownLatexConverter)),
+        #[cfg(not(feature = "markdown_latex"))]
+        Format::MarkdownLatex => Err(crate::error::Error::FeatureDisabled("markdown-latex".into())),
+
+        #[cfg(feature = "markdown_rst")]
+        Format::MarkdownRst => Ok(Box::new(markdown_rst::MarkdownRstConverter)),
+        #[cfg(not(feature = "markdown_rst"))]
+        Format::MarkdownRst => Err(crate::error::Error::FeatureDisabled("markdown-rst".into())),
+
+        #[cfg(feature = "markdown_asciidoc")]
+        Format::MarkdownAsciidoc => Ok(Box::new(markdown_asciidoc::MarkdownAsciidocConverter)),
+        #[cfg(not(feature = "markdown_asciidoc"))]
+        Format::MarkdownAsciidoc => Err(crate::error::Error::FeatureDisabled("markdown-asciidoc".into())),
+
+        #[cfg(feature = "markdown_org")]
+        Format::MarkdownOrg => Ok(Box::new(markdown_org::MarkdownOrgConverter)),
+        #[cfg(not(feature = "markdown_org"))]
+        Format::MarkdownOrg => Err(crate::error::Error::FeatureDisabled("markdown-org".into())),
+
+        #[cfg(feature = "markdown_epub_out")]
+        Format::MarkdownEpub => Ok(Box::new(markdown_epub_out::MarkdownEpubConverter)),
+        #[cfg(not(feature = "markdown_epub_out"))]
+        Format::MarkdownEpub => Err(crate::error::Error::FeatureDisabled("markdown-epub".into())),
+
+        #[cfg(feature = "markdown_json_ast")]
+        Format::MarkdownJsonAst => Ok(Box::new(markdown_json_ast::MarkdownJsonAstConverter)),
+        #[cfg(not(feature = "markdown_json_ast"))]
+        Format::MarkdownJsonAst => Err(crate::error::Error::FeatureDisabled("markdown-json-ast".into())),
     }
 }

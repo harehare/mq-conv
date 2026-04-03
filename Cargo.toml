@@ -90,7 +90,7 @@ kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.23", optional = true}
 lopdf = {version = "0.38", optional = true}
-epub-builder = {version = "0.7", optional = true}
+epub-builder = {version = "0.8", optional = true}
 mq-markdown = {version = "0.5.24", optional = true, features = ["html-to-markdown", "json"]}
 pdf-extract = {version = "0.10", optional = true}
 quick-xml = {version = "0.39", optional = true}

@@ -18,9 +18,13 @@ struct Args {
     #[arg(short, long)]
     format: Option<FormatArg>,
 
-    /// Output directory for individual .md files (one per input file)
+    /// Output directory for individual output files (one per input file)
     #[arg(short, long)]
     output_dir: Option<PathBuf>,
+
+    /// Target output format when converting from Markdown
+    #[arg(long)]
+    to: Option<ToArg>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -44,6 +48,35 @@ enum FormatArg {
     Video,
     Ocr,
     MarkdownDocx,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum ToArg {
+    Html,
+    Text,
+    Latex,
+    Rst,
+    Asciidoc,
+    Org,
+    Epub,
+    Json,
+    Docx,
+}
+
+impl From<ToArg> for Format {
+    fn from(arg: ToArg) -> Self {
+        match arg {
+            ToArg::Html => Format::MarkdownHtml,
+            ToArg::Text => Format::MarkdownText,
+            ToArg::Latex => Format::MarkdownLatex,
+            ToArg::Rst => Format::MarkdownRst,
+            ToArg::Asciidoc => Format::MarkdownAsciidoc,
+            ToArg::Org => Format::MarkdownOrg,
+            ToArg::Epub => Format::MarkdownEpub,
+            ToArg::Json => Format::MarkdownJsonAst,
+            ToArg::Docx => Format::MarkdownDocx,
+        }
+    }
 }
 
 impl From<FormatArg> for Format {
@@ -72,19 +105,36 @@ impl From<FormatArg> for Format {
     }
 }
 
+fn resolve_output_format(detected: Format, forced_to: Option<&ToArg>) -> miette::Result<Format> {
+    match forced_to {
+        None => Ok(detected),
+        Some(to) => {
+            if detected == Format::MarkdownDocx {
+                Ok(to.clone().into())
+            } else {
+                Err(miette::miette!(
+                    "--to is only valid for Markdown (.md) input files"
+                ))
+            }
+        }
+    }
+}
+
 fn convert_one(
     input: &[u8],
     filename: Option<&str>,
     forced_format: Option<&FormatArg>,
+    forced_to: Option<&ToArg>,
     writer: &mut dyn Write,
 ) -> miette::Result<()> {
-    let format = if let Some(f) = forced_format {
+    let detected = if let Some(f) = forced_format {
         f.clone().into()
     } else {
         Format::detect(filename, input).ok_or_else(|| {
             miette::miette!("Could not detect file format. Use --format to specify.")
         })?
     };
+    let format = resolve_output_format(detected, forced_to)?;
 
     let converter = mq_conv::formats::get_converter(format).map_err(|e| miette::miette!("{e}"))?;
     converter
@@ -108,7 +158,7 @@ fn main() -> miette::Result<()> {
 
         let stdout = io::stdout();
         let mut writer = BufWriter::new(stdout.lock());
-        convert_one(&buf, None, args.format.as_ref(), &mut writer)?;
+        convert_one(&buf, None, args.format.as_ref(), args.to.as_ref(), &mut writer)?;
         writer.flush().into_diagnostic()?;
     } else if let Some(ref output_dir) = args.output_dir {
         // Output each file as individual output file
@@ -123,13 +173,14 @@ fn main() -> miette::Result<()> {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "output".to_string());
 
-            let format = if let Some(f) = args.format.as_ref() {
+            let detected = if let Some(f) = args.format.as_ref() {
                 f.clone().into()
             } else {
                 Format::detect(filename.as_deref(), &input).ok_or_else(|| {
                     miette::miette!("Could not detect file format. Use --format to specify.")
                 })?
             };
+            let format = resolve_output_format(detected, args.to.as_ref())?;
 
             let converter =
                 mq_conv::formats::get_converter(format).map_err(|e| miette::miette!("{e}"))?;
@@ -158,6 +209,7 @@ fn main() -> miette::Result<()> {
                 &input,
                 filename.as_deref(),
                 args.format.as_ref(),
+                args.to.as_ref(),
                 &mut writer,
             )?;
         }

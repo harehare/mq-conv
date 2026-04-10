@@ -5,8 +5,7 @@ set -e
 # mq-conv installation script
 
 readonly MQC_REPO="harehare/mq-conv"
-readonly MQC_INSTALL_DIR="$HOME/.mq"
-readonly MQC_BIN_DIR="$MQC_INSTALL_DIR/bin"
+readonly MQC_BIN_DIR="$HOME/.local/bin"
 
 
 # Colors for output

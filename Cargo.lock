@@ -275,7 +275,7 @@ dependencies = [
  "encoding_rs",
  "fast-float2",
  "log",
- "quick-xml 0.39.2",
+ "quick-xml 0.39.3",
  "serde",
  "zip 7.2.0",
 ]
@@ -1433,7 +1433,7 @@ dependencies = [
  "mq-markdown",
  "pdf-extract",
  "pretty_assertions",
- "quick-xml 0.39.2",
+ "quick-xml 0.39.3",
  "rstest",
  "rusqlite",
  "serde_json",
@@ -1801,9 +1801,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.39.2"
+version = "0.39.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958f21e8e7ceb5a1aa7fa87fab28e7c75976e0bfe7e23ff069e0a260f894067d"
+checksum = "721da970c312655cde9b4ffe0547f20a8494866a4af5ff51f18b7c633d0c870b"
 dependencies = [
  "encoding_rs",
  "memchr",

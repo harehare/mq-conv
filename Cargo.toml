@@ -81,7 +81,7 @@ clap = {version = "4.6", features = ["derive"]}
 miette = {version = "7", features = ["fancy"]}
 thiserror = "2"
 
-calamine = {version = "0.34", optional = true}
+calamine = {version = "0.35", optional = true}
 csv = {version = "1", optional = true}
 docx-rs = {version = "0.4", optional = true}
 epub-builder = {version = "0.8", optional = true}

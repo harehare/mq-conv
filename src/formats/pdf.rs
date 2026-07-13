@@ -1,8 +1,8 @@
 use std::io::Write;
 
-use lopdf::Document;
 use pdf_extract::{
-    ColorSpace, MediaBox, OutputDev, OutputError, Path, PathOp, Transform, output_doc,
+    ColorSpace, Document, MediaBox, Object, OutputDev, OutputError, Path, PathOp, Transform,
+    output_doc,
 };
 
 use crate::converter::Converter;
@@ -663,9 +663,9 @@ fn extract_info(doc: &Document) -> Vec<(String, String)> {
     info
 }
 
-fn pdf_object_to_string(obj: &lopdf::Object) -> String {
+fn pdf_object_to_string(obj: &Object) -> String {
     match obj {
-        lopdf::Object::String(bytes, _) => {
+        Object::String(bytes, _) => {
             if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
                 let chars: Vec<u16> = bytes[2..]
                     .chunks(2)

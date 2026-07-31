@@ -20,6 +20,7 @@ name = "mq_conv"
 path = "src/lib.rs"
 
 [features]
+asciidoc = []
 audio = ["dep:lofty"]
 csv = ["dep:csv"]
 default = [
@@ -49,6 +50,10 @@ default = [
   "markdown_org",
   "markdown_epub_out",
   "markdown_json_ast",
+  "rst",
+  "org",
+  "mediawiki",
+  "asciidoc",
 ]
 epub = ["dep:zip", "dep:quick-xml", "dep:mq-markdown"]
 excel = ["dep:calamine"]
@@ -64,9 +69,12 @@ markdown_latex = ["dep:mq-markdown"]
 markdown_org = ["dep:mq-markdown"]
 markdown_rst = ["dep:mq-markdown"]
 markdown_text = ["dep:mq-markdown"]
+mediawiki = []
 ocr = ["dep:leptess"]
+org = []
 pdf = ["dep:pdf-extract"]
 powerpoint = ["dep:zip", "dep:quick-xml"]
+rst = []
 sqlite = ["dep:rusqlite"]
 tar = ["dep:tar", "dep:flate2"]
 toml_conv = ["dep:toml"]

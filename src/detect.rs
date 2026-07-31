@@ -29,6 +29,10 @@ pub enum Format {
     MarkdownOrg,
     MarkdownEpub,
     MarkdownJsonAst,
+    Rst,
+    Org,
+    MediaWiki,
+    Asciidoc,
 }
 
 impl Format {
@@ -70,6 +74,10 @@ impl Format {
                 Some(Self::Video)
             }
             "md" | "markdown" => Some(Self::MarkdownDocx),
+            "rst" => Some(Self::Rst),
+            "org" => Some(Self::Org),
+            "wiki" | "mediawiki" => Some(Self::MediaWiki),
+            "adoc" | "asciidoc" => Some(Self::Asciidoc),
             _ => None,
         }
     }
@@ -236,6 +244,10 @@ impl std::fmt::Display for Format {
             Self::MarkdownOrg => write!(f, "markdown-org"),
             Self::MarkdownEpub => write!(f, "markdown-epub"),
             Self::MarkdownJsonAst => write!(f, "markdown-json-ast"),
+            Self::Rst => write!(f, "rst"),
+            Self::Org => write!(f, "org"),
+            Self::MediaWiki => write!(f, "mediawiki"),
+            Self::Asciidoc => write!(f, "asciidoc"),
         }
     }
 }

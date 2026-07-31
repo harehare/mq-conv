@@ -39,11 +39,10 @@ impl Converter for MarkdownEpubConverter {
 
 fn extract_heading_text(nodes: &[Node]) -> Option<String> {
     for node in nodes {
-        if let Node::Heading(h) = node {
-            if h.depth == 1 {
+        if let Node::Heading(h) = node
+            && h.depth == 1 {
                 return Some(extract_text(&h.values));
             }
-        }
     }
     None
 }
@@ -73,14 +72,13 @@ fn split_into_chapters(nodes: &[Node]) -> Vec<(String, Vec<&Node>)> {
     let mut current_nodes: Vec<&Node> = Vec::new();
 
     for node in nodes {
-        if let Node::Heading(h) = node {
-            if h.depth == 1 {
+        if let Node::Heading(h) = node
+            && h.depth == 1 {
                 if !current_nodes.is_empty() || !chapters.is_empty() {
                     chapters.push((current_title.clone(), std::mem::take(&mut current_nodes)));
                 }
                 current_title = extract_text(&h.values);
             }
-        }
         current_nodes.push(node);
     }
 

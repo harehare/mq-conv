@@ -7,12 +7,12 @@ A CLI tool for converting various file formats to Markdown
 
 ## Overview
 
-`mq-conv` is a command-line tool that converts various file formats to Markdown. It supports 16+ formats including documents, spreadsheets, data formats, media files, and archives. Designed to work seamlessly with [mq](https://github.com/harehare/mq) and other Markdown processing tools.
+`mq-conv` is a command-line tool that converts various file formats to Markdown. It supports 20+ formats including documents, markup languages, spreadsheets, data formats, media files, and archives. Designed to work seamlessly with [mq](https://github.com/harehare/mq) and other Markdown processing tools.
 
 ### Key Features
 
 - **Automatic Format Detection** - Detects file formats by extension and magic bytes
-- **18+ Supported Formats** - Documents, data, media, and archives
+- **20+ Supported Formats** - Documents, markup, data, media, and archives
 - **Image OCR** - Extract text from images using Tesseract OCR
 - **Markdown to Word** - Convert Markdown documents to `.docx` format
 - **Stdin Support** - Pipe data directly from other commands
@@ -94,6 +94,15 @@ mq conv data.xlsx | mq '.table'
 | HTML            | `.html`            |
 | Markdown → Word | `.md`, `.markdown` |
 
+### Markup Languages
+
+| Format          | Extensions              |
+| ---------------- | ------------------------ |
+| reStructuredText | `.rst`                   |
+| Org-mode         | `.org`                   |
+| MediaWiki        | `.wiki`, `.mediawiki`     |
+| AsciiDoc         | `.adoc`, `.asciidoc`     |
+
 ### Spreadsheets
 
 | Format | Extensions                       |
@@ -143,7 +152,7 @@ Options:
 
 ### Available Format Values
 
-`excel`, `pdf`, `powerpoint`, `word`, `image`, `zip`, `epub`, `audio`, `csv`, `html`, `json`, `yaml`, `toml`, `xml`, `sqlite`, `tar`, `video`, `ocr`, `markdown-docx`
+`excel`, `pdf`, `powerpoint`, `word`, `image`, `zip`, `epub`, `audio`, `csv`, `html`, `json`, `yaml`, `toml`, `xml`, `sqlite`, `tar`, `video`, `ocr`, `markdown-docx`, `rst`, `org`, `mediawiki`, `asciidoc`
 
 ### OCR Requirements
 

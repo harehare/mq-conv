@@ -48,6 +48,10 @@ enum FormatArg {
     Video,
     Ocr,
     MarkdownDocx,
+    Rst,
+    Org,
+    Mediawiki,
+    Asciidoc,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -101,6 +105,10 @@ impl From<FormatArg> for Format {
             FormatArg::Video => Format::Video,
             FormatArg::Ocr => Format::Ocr,
             FormatArg::MarkdownDocx => Format::MarkdownDocx,
+            FormatArg::Rst => Format::Rst,
+            FormatArg::Org => Format::Org,
+            FormatArg::Mediawiki => Format::MediaWiki,
+            FormatArg::Asciidoc => Format::Asciidoc,
         }
     }
 }

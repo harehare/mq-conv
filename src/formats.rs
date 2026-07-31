@@ -1,6 +1,8 @@
 #[cfg(any(feature = "json", feature = "toml_conv", feature = "yaml"))]
 pub mod structured;
 
+#[cfg(feature = "asciidoc")]
+pub mod asciidoc;
 #[cfg(feature = "audio")]
 pub mod audio;
 #[cfg(feature = "csv")]
@@ -33,12 +35,18 @@ pub mod markdown_org;
 pub mod markdown_epub_out;
 #[cfg(feature = "markdown_json_ast")]
 pub mod markdown_json_ast;
+#[cfg(feature = "mediawiki")]
+pub mod mediawiki;
 #[cfg(feature = "ocr")]
 pub mod ocr;
+#[cfg(feature = "org")]
+pub mod org;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 #[cfg(feature = "powerpoint")]
 pub mod powerpoint;
+#[cfg(feature = "rst")]
+pub mod rst;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 #[cfg(feature = "tar")]
@@ -195,5 +203,25 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::MarkdownJsonAst => Ok(Box::new(markdown_json_ast::MarkdownJsonAstConverter)),
         #[cfg(not(feature = "markdown_json_ast"))]
         Format::MarkdownJsonAst => Err(crate::error::Error::FeatureDisabled("markdown-json-ast".into())),
+
+        #[cfg(feature = "rst")]
+        Format::Rst => Ok(Box::new(rst::RstConverter)),
+        #[cfg(not(feature = "rst"))]
+        Format::Rst => Err(crate::error::Error::FeatureDisabled("rst".into())),
+
+        #[cfg(feature = "org")]
+        Format::Org => Ok(Box::new(org::OrgConverter)),
+        #[cfg(not(feature = "org"))]
+        Format::Org => Err(crate::error::Error::FeatureDisabled("org".into())),
+
+        #[cfg(feature = "mediawiki")]
+        Format::MediaWiki => Ok(Box::new(mediawiki::MediaWikiConverter)),
+        #[cfg(not(feature = "mediawiki"))]
+        Format::MediaWiki => Err(crate::error::Error::FeatureDisabled("mediawiki".into())),
+
+        #[cfg(feature = "asciidoc")]
+        Format::Asciidoc => Ok(Box::new(asciidoc::AsciidocConverter)),
+        #[cfg(not(feature = "asciidoc"))]
+        Format::Asciidoc => Err(crate::error::Error::FeatureDisabled("asciidoc".into())),
     }
 }

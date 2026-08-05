@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "mq-conv"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "calamine",
  "clap",
@@ -1385,9 +1385,9 @@ dependencies = [
 
 [[package]]
 name = "mq-markdown"
-version = "0.7.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d296714247c23a16b0890577c6e876fcdc1702964864b38c797aab20da009f57"
+checksum = "98556f6da5fee84c268b156bfceda2e48f1063bff2956c1daab7074d0f7500c6"
 dependencies = [
  "ego-tree",
  "itertools",
@@ -1399,6 +1399,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "smol_str",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

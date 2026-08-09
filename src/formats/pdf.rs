@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 use pdf_extract::{
@@ -37,15 +38,42 @@ impl Converter for PdfConverter {
             return Ok(());
         }
 
-        let total_pages = collector.pages.len();
-        for (i, page) in collector.pages.into_iter().enumerate() {
+        // Build words/lines for every page up front. This is needed so headings can be
+        // detected from font size relative to the whole document, and so repeated
+        // running headers/footers can be spotted across pages before rendering.
+        let mut pages: Vec<PageLines> = collector
+            .pages
+            .into_iter()
+            .map(|p| {
+                let words = build_words(p.glyphs);
+                let lines = build_lines(words);
+                let had_content = !lines.is_empty();
+                PageLines {
+                    lines,
+                    rects: p.rects,
+                    media_box: p.media_box,
+                    had_content,
+                }
+            })
+            .collect();
+
+        let body_size = estimate_body_font_size(&pages);
+        let repeated = detect_repeated_header_footer(&pages);
+        if !repeated.is_empty() {
+            for page in &mut pages {
+                strip_repeated_lines(&mut page.lines, page.media_box, &repeated);
+            }
+        }
+
+        let total_pages = pages.len();
+        for (i, page) in pages.into_iter().enumerate() {
             writeln!(writer, "## Page {}", i + 1)?;
             writeln!(writer)?;
 
-            if page.glyphs.is_empty() {
+            if !page.had_content {
                 writeln!(writer, "*Empty page*")?;
-            } else {
-                write_page_content(writer, page)?;
+            } else if !page.lines.is_empty() {
+                write_page_content(writer, page.lines, &page.rects, body_size)?;
             }
 
             if i + 1 < total_pages {
@@ -67,18 +95,31 @@ struct Glyph {
     x: f64,
     y: f64,
     advance: f64,
+    font_size: f64,
     ch: String,
 }
+
+/// (llx, lly, urx, ury) page bounds, in the same coordinate space as glyph positions.
+type MediaBoxDims = (f64, f64, f64, f64);
 
 struct PageData {
     glyphs: Vec<Glyph>,
     rects: Vec<(f64, f64, f64, f64)>, // (x, y, width, height)
+    media_box: MediaBoxDims,
+}
+
+struct PageLines {
+    lines: Vec<TextLine>,
+    rects: Vec<(f64, f64, f64, f64)>,
+    media_box: MediaBoxDims,
+    had_content: bool,
 }
 
 struct PageCollector {
     pages: Vec<PageData>,
     current_glyphs: Vec<Glyph>,
     current_rects: Vec<(f64, f64, f64, f64)>,
+    current_media_box: MediaBoxDims,
 }
 
 impl PageCollector {
@@ -87,6 +128,7 @@ impl PageCollector {
             pages: Vec::new(),
             current_glyphs: Vec::new(),
             current_rects: Vec::new(),
+            current_media_box: (0.0, 0.0, 0.0, 0.0),
         }
     }
 
@@ -110,11 +152,12 @@ impl OutputDev for PageCollector {
     fn begin_page(
         &mut self,
         _page_num: u32,
-        _media_box: &MediaBox,
+        media_box: &MediaBox,
         _art_box: Option<(f64, f64, f64, f64)>,
     ) -> std::result::Result<(), OutputError> {
         self.current_glyphs.clear();
         self.current_rects.clear();
+        self.current_media_box = (media_box.llx, media_box.lly, media_box.urx, media_box.ury);
         Ok(())
     }
 
@@ -122,6 +165,7 @@ impl OutputDev for PageCollector {
         self.pages.push(PageData {
             glyphs: std::mem::take(&mut self.current_glyphs),
             rects: std::mem::take(&mut self.current_rects),
+            media_box: self.current_media_box,
         });
         Ok(())
     }
@@ -139,10 +183,15 @@ impl OutputDev for PageCollector {
         // Approximate advance width in page units
         let scale = (trm.m11 * trm.m11 + trm.m12 * trm.m12).sqrt();
         let advance = width.abs() * font_size.abs() * scale;
+        // The effective rendered glyph height also scales with the text matrix,
+        // so use `scale` (not the raw, possibly-normalized `font_size`) as the
+        // heading/body-text size signal.
+        let rendered_size = font_size.abs() * scale;
         self.current_glyphs.push(Glyph {
             x,
             y,
             advance,
+            font_size: rendered_size,
             ch: char.to_string(),
         });
         Ok(())
@@ -188,11 +237,15 @@ impl OutputDev for PageCollector {
 struct Word {
     x: f64,
     y: f64,
+    font_size: f64,
     text: String,
 }
 
 struct TextLine {
     y: f64,
+    /// Representative font size for the line (max of its words' sizes), used for
+    /// heading detection and to avoid merging differently-sized text into one paragraph.
+    font_size: f64,
     words: Vec<Word>,
 }
 
@@ -211,6 +264,7 @@ fn build_words(mut glyphs: Vec<Glyph>) -> Vec<Word> {
     let mut buf = String::new();
     let mut wx = glyphs[0].x;
     let mut wy = glyphs[0].y;
+    let mut w_font = glyphs[0].font_size;
     let mut prev_x_end = glyphs[0].x + glyphs[0].advance.max(1.0);
     let mut prev_y = glyphs[0].y;
 
@@ -224,20 +278,24 @@ fn build_words(mut glyphs: Vec<Glyph>) -> Vec<Word> {
             words.push(Word {
                 x: wx,
                 y: wy,
+                font_size: w_font,
                 text: buf.trim().to_string(),
             });
             buf.clear();
             wx = glyph.x;
             wy = glyph.y;
+            w_font = glyph.font_size;
         } else if new_word {
             buf.clear();
             wx = glyph.x;
             wy = glyph.y;
+            w_font = glyph.font_size;
         }
 
         if buf.is_empty() {
             wx = glyph.x;
             wy = glyph.y;
+            w_font = glyph.font_size;
         }
 
         buf.push_str(&glyph.ch);
@@ -249,6 +307,7 @@ fn build_words(mut glyphs: Vec<Glyph>) -> Vec<Word> {
         words.push(Word {
             x: wx,
             y: wy,
+            font_size: w_font,
             text: buf.trim().to_string(),
         });
     }
@@ -269,11 +328,15 @@ fn build_lines(mut words: Vec<Word>) -> Vec<TextLine> {
         if let Some(last) = lines.last_mut()
             && (word.y - last.y).abs() < 3.0
         {
+            if word.font_size > last.font_size {
+                last.font_size = word.font_size;
+            }
             last.words.push(word);
             continue;
         }
         lines.push(TextLine {
             y: word.y,
+            font_size: word.font_size,
             words: vec![word],
         });
     }
@@ -284,6 +347,141 @@ fn build_lines(mut words: Vec<Word>) -> Vec<TextLine> {
     }
 
     lines
+}
+
+// ---------------------------------------------------------------------------
+// Body font size estimation & heading detection
+// ---------------------------------------------------------------------------
+
+/// Estimate the document's normal body-text font size as the most common
+/// line font size (rounded to the nearest 0.5pt), across all pages.
+fn estimate_body_font_size(pages: &[PageLines]) -> f64 {
+    let mut counts: HashMap<i64, usize> = HashMap::new();
+    for page in pages {
+        for line in &page.lines {
+            let bucket = (line.font_size * 2.0).round() as i64;
+            if bucket <= 0 {
+                continue;
+            }
+            *counts.entry(bucket).or_insert(0) += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|&(_, c)| c)
+        .map(|(b, _)| b as f64 / 2.0)
+        .unwrap_or(10.0)
+}
+
+/// Map a line's font size (relative to the body text size) to a heading level.
+fn heading_level_for_font(size: f64, body_size: f64) -> Option<u8> {
+    if body_size <= 0.0 || size <= 0.0 {
+        return None;
+    }
+    let ratio = size / body_size;
+    if ratio >= 1.8 {
+        Some(1)
+    } else if ratio >= 1.4 {
+        Some(2)
+    } else if ratio >= 1.15 {
+        Some(3)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Repeated header/footer detection
+// ---------------------------------------------------------------------------
+
+/// Normalize text for cross-page repetition comparison: lowercase, and collapse
+/// any run of digits into a single `#` placeholder so page numbers like
+/// "Page 3 of 42" and "Page 4 of 42" are recognized as the same running element.
+fn normalize_repeat_text(s: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_digit = false;
+    for c in s.trim().chars() {
+        if c.is_ascii_digit() {
+            if !last_was_digit {
+                out.push('#');
+            }
+            last_was_digit = true;
+        } else {
+            out.push(c.to_ascii_lowercase());
+            last_was_digit = false;
+        }
+    }
+    out
+}
+
+fn is_in_header_zone(y: f64, media_box: MediaBoxDims) -> bool {
+    let (_, lly, _, ury) = media_box;
+    let height = (ury - lly).max(1.0);
+    y > ury - height * 0.08
+}
+
+fn is_in_footer_zone(y: f64, media_box: MediaBoxDims) -> bool {
+    let (_, lly, _, ury) = media_box;
+    let height = (ury - lly).max(1.0);
+    y < lly + height * 0.08
+}
+
+/// Find lines (running headers/footers, page numbers) whose normalized text
+/// repeats in the top/bottom margin across a majority of pages. Only meaningful
+/// with at least 3 pages.
+fn detect_repeated_header_footer(pages: &[PageLines]) -> HashSet<String> {
+    if pages.len() < 3 {
+        return HashSet::new();
+    }
+
+    let mut seen_on: HashMap<String, HashSet<usize>> = HashMap::new();
+    for (page_idx, page) in pages.iter().enumerate() {
+        for line in &page.lines {
+            let text = line_to_string(line);
+            let trimmed = text.trim();
+            if trimmed.is_empty() || trimmed.chars().count() > 80 {
+                continue;
+            }
+            if !is_in_header_zone(line.y, page.media_box)
+                && !is_in_footer_zone(line.y, page.media_box)
+            {
+                continue;
+            }
+            let norm = normalize_repeat_text(trimmed);
+            if norm.is_empty() {
+                continue;
+            }
+            seen_on.entry(norm).or_default().insert(page_idx);
+        }
+    }
+
+    let threshold = (pages.len() * 6 / 10).max(3);
+    seen_on
+        .into_iter()
+        .filter(|(_, on_pages)| on_pages.len() >= threshold)
+        .map(|(text, _)| text)
+        .collect()
+}
+
+fn strip_repeated_lines(
+    lines: &mut Vec<TextLine>,
+    media_box: MediaBoxDims,
+    repeated: &HashSet<String>,
+) {
+    if repeated.is_empty() {
+        return;
+    }
+    lines.retain(|line| {
+        let text = line_to_string(line);
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+        if !is_in_header_zone(line.y, media_box) && !is_in_footer_zone(line.y, media_box) {
+            return true;
+        }
+        !repeated.contains(&normalize_repeat_text(trimmed))
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +532,7 @@ fn try_as_table(lines: &[&TextLine]) -> Option<Vec<Vec<String>>> {
     let aligned = lines
         .iter()
         .filter(|line| {
-            let mut used_cols = std::collections::HashSet::new();
+            let mut used_cols = HashSet::new();
             for w in &line.words {
                 used_cols.insert(nearest_col(w.x, &cols));
             }
@@ -442,10 +640,13 @@ fn is_bullet_line(s: &str) -> bool {
         || s.starts_with("* ")
 }
 
-fn write_page_content(writer: &mut dyn Write, page: PageData) -> Result<()> {
-    let has_table_rects = rects_suggest_table(&page.rects);
-    let words = build_words(page.glyphs);
-    let lines = build_lines(words);
+fn write_page_content(
+    writer: &mut dyn Write,
+    lines: Vec<TextLine>,
+    rects: &[(f64, f64, f64, f64)],
+    body_size: f64,
+) -> Result<()> {
+    let has_table_rects = rects_suggest_table(rects);
 
     if lines.is_empty() {
         return Ok(());
@@ -511,6 +712,12 @@ fn write_page_content(writer: &mut dyn Write, page: PageData) -> Result<()> {
                 break;
             }
 
+            // A jump in font size (e.g. a heading immediately followed by body
+            // text with little vertical gap) also signals a break.
+            if (lines[j].font_size - para_lines[0].font_size).abs() > 0.5 {
+                break;
+            }
+
             let next_text = line_to_string(&lines[j]);
             let next_trimmed = next_text.trim();
 
@@ -529,7 +736,7 @@ fn write_page_content(writer: &mut dyn Write, page: PageData) -> Result<()> {
             j += 1;
         }
 
-        write_paragraph(writer, &para_lines)?;
+        write_paragraph(writer, &para_lines, body_size)?;
         i = j;
     }
 
@@ -537,7 +744,7 @@ fn write_page_content(writer: &mut dyn Write, page: PageData) -> Result<()> {
 }
 
 /// Join a group of consecutive lines into a single paragraph and write it.
-fn write_paragraph(writer: &mut dyn Write, lines: &[&TextLine]) -> Result<()> {
+fn write_paragraph(writer: &mut dyn Write, lines: &[&TextLine], body_size: f64) -> Result<()> {
     let mut para = String::new();
 
     for line in lines {
@@ -574,11 +781,23 @@ fn write_paragraph(writer: &mut dyn Write, lines: &[&TextLine]) -> Result<()> {
         return Ok(());
     }
 
-    // Single isolated line → check for heading
-    if lines.len() == 1 && is_heading_candidate(&para) {
-        writeln!(writer, "### {para}")?;
-        writeln!(writer)?;
-        return Ok(());
+    // Single isolated line → check for heading, preferring the font-size signal
+    // (relative to body text) over the punctuation/capitalization heuristic.
+    if lines.len() == 1 {
+        if let Some(level) = heading_level_for_font(lines[0].font_size, body_size)
+            && para.chars().count() <= 200
+        {
+            let hashes = "#".repeat(level as usize);
+            writeln!(writer, "{hashes} {para}")?;
+            writeln!(writer)?;
+            return Ok(());
+        }
+
+        if is_heading_candidate(&para) {
+            writeln!(writer, "### {para}")?;
+            writeln!(writer)?;
+            return Ok(());
+        }
     }
 
     writeln!(writer, "{para}")?;
@@ -718,4 +937,139 @@ fn strip_numbered_prefix(line: &str) -> Option<&str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal, valid single-content-stream-per-page PDF using only
+    /// the built-in Helvetica font, for exercising the layout-based parser.
+    fn make_pdf(pages: &[&str], media_box: &str) -> Vec<u8> {
+        let n_pages = pages.len();
+        let font_obj_num = 3 + n_pages * 2;
+        let kids: Vec<String> = (0..n_pages).map(|i| format!("{} 0 R", 3 + i * 2)).collect();
+
+        let mut objs: Vec<(usize, String)> = Vec::new();
+        objs.push((1, "<< /Type /Catalog /Pages 2 0 R >>".to_string()));
+        objs.push((
+            2,
+            format!(
+                "<< /Type /Pages /Kids [{}] /Count {} >>",
+                kids.join(" "),
+                n_pages
+            ),
+        ));
+        for (i, content) in pages.iter().enumerate() {
+            let page_num = 3 + i * 2;
+            let content_num = page_num + 1;
+            objs.push((
+                page_num,
+                format!(
+                    "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 {font_obj_num} 0 R >> >> /MediaBox {media_box} /Contents {content_num} 0 R >>"
+                ),
+            ));
+            objs.push((
+                content_num,
+                format!(
+                    "<< /Length {} >>\nstream\n{}\nendstream",
+                    content.as_bytes().len(),
+                    content
+                ),
+            ));
+        }
+        objs.push((
+            font_obj_num,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ));
+
+        let mut out = String::from("%PDF-1.4\n");
+        let mut offsets = vec![0usize; objs.len() + 2];
+        for (num, body) in &objs {
+            offsets[*num] = out.as_bytes().len();
+            out.push_str(&format!("{num} 0 obj\n{body}\nendobj\n"));
+        }
+        let xref_offset = out.as_bytes().len();
+        let max_num = objs.iter().map(|(n, _)| *n).max().unwrap();
+        out.push_str(&format!("xref\n0 {}\n", max_num + 1));
+        out.push_str("0000000000 65535 f \n");
+        for i in 1..=max_num {
+            out.push_str(&format!(
+                "{:010} 00000 n \n",
+                offsets.get(i).copied().unwrap_or(0)
+            ));
+        }
+        out.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
+            max_num + 1,
+            xref_offset
+        ));
+        out.into_bytes()
+    }
+
+    fn convert(pages: &[&str], media_box: &str) -> String {
+        let pdf = make_pdf(pages, media_box);
+        let mut out = Vec::new();
+        PdfConverter.convert(&pdf, &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn test_large_font_line_becomes_h1() {
+        let page = "BT /F1 24 Tf 20 260 Td (Big Heading) Tj ET\n\
+             BT /F1 10 Tf 20 220 Td (This is normal body text on the page.) Tj ET";
+        let out = convert(&[page], "[0 0 300 300]");
+        assert!(out.contains("# Big Heading"), "missing h1 in:\n{out}");
+        assert!(
+            out.contains("This is normal body text on the page."),
+            "missing body text in:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_medium_font_line_becomes_h3() {
+        let page = "BT /F1 10 Tf 20 260 Td (This is normal body text setting the baseline.) Tj ET\n\
+             BT /F1 13 Tf 20 220 Td (Subheading) Tj ET\n\
+             BT /F1 10 Tf 20 200 Td (More normal body text here to confirm.) Tj ET";
+        let out = convert(&[page], "[0 0 300 300]");
+        assert!(out.contains("### Subheading"), "missing h3 in:\n{out}");
+    }
+
+    #[test]
+    fn test_repeated_footer_stripped_across_pages() {
+        let mk = |body: &str, n: u32| {
+            format!(
+                "BT /F1 10 Tf 20 220 Td ({body}) Tj ET\nBT /F1 8 Tf 20 10 Td (Confidential - Page {n}) Tj ET"
+            )
+        };
+        let p1 = mk("Body text on page one.", 1);
+        let p2 = mk("Body text on page two.", 2);
+        let p3 = mk("Body text on page three.", 3);
+        let out = convert(&[p1.as_str(), p2.as_str(), p3.as_str()], "[0 0 300 300]");
+        assert!(
+            !out.to_lowercase().contains("confidential"),
+            "repeated footer should have been stripped:\n{out}"
+        );
+        assert!(out.contains("Body text on page one."));
+        assert!(out.contains("Body text on page two."));
+        assert!(out.contains("Body text on page three."));
+    }
+
+    #[test]
+    fn test_footer_not_stripped_below_page_threshold() {
+        // Only 2 pages: repetition detection requires >= 3 pages, so a
+        // shared footer line should be left intact rather than guessed away.
+        let mk = |body: &str| {
+            format!(
+                "BT /F1 10 Tf 20 220 Td ({body}) Tj ET\nBT /F1 8 Tf 20 10 Td (Confidential) Tj ET"
+            )
+        };
+        let p1 = mk("Body text on page one.");
+        let p2 = mk("Body text on page two.");
+        let out = convert(&[p1.as_str(), p2.as_str()], "[0 0 300 300]");
+        assert!(
+            out.to_lowercase().contains("confidential"),
+            "footer should be kept with fewer than 3 pages:\n{out}"
+        );
+    }
 }

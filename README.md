@@ -22,19 +22,6 @@ Most "convert X to Markdown" tools either dump raw text (losing headings, tables
 - **20+ formats** — documents, markup languages, spreadsheets, data formats, media, and archives, all through one CLI.
 - **Composable** — output is plain Markdown on stdout, ready to pipe into [mq](https://github.com/harehare/mq) or any other Unix tool.
 
-### How it compares
-
-|                       | mq-conv          | Pandoc               | MarkItDown / Firecrawl (anydoc) |
-| --------------------- | ---------------- | --------------------- | -------------------------------- |
-| Runs offline           | ✅               | ✅                     | Partial (some require an LLM/API key for best results) |
-| Install                | Single binary     | System package         | Python package / hosted API      |
-| PDF table detection    | ✅ (layout-based) | Limited                | ✅ (often LLM-assisted)          |
-| OCR for scanned docs   | ✅ (Tesseract)    | ❌                     | ✅ (cloud)                       |
-| Designed for CLI pipelines | ✅ (built for `mq`) | ✅                 | ❌ (library/API-first)           |
-| Dependency footprint   | None at runtime   | Haskell runtime        | Python + ML deps / API key       |
-
-mq-conv isn't trying to replace Pandoc's markup-to-markup fidelity or an LLM-based parser's semantic understanding — it aims for the sweet spot of **fast, dependency-free, good-enough-by-default Markdown** for feeding pipelines and LLM context windows.
-
 ### Key Features
 
 - **Layout-Aware PDF Parsing** - Reconstructs headings (by relative font size), paragraphs, lists, and tables from glyph positions, and strips repeated running headers/footers and page numbers

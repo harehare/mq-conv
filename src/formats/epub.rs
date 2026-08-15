@@ -260,6 +260,7 @@ fn html_to_markdown(html: &str) -> String {
             extract_scripts_as_code_blocks: true,
             generate_front_matter: true,
             use_title_as_h1: true,
+            base_url: None,
         },
     )
     .unwrap_or_default()

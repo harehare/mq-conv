@@ -20,6 +20,7 @@ impl Converter for HtmlConverter {
                 extract_scripts_as_code_blocks: true,
                 generate_front_matter: true,
                 use_title_as_h1: true,
+                base_url: None,
             },
         )
         .map_err(|e| Error::Conversion {

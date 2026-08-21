@@ -9,7 +9,7 @@ license = "MIT"
 name = "mq-conv"
 readme = "README.md"
 repository = "https://github.com/harehare/mq-conv"
-version = "0.1.7"
+version = "0.1.8"
 
 [[bin]]
 name = "mq-conv"

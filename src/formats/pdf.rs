@@ -1,13 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write;
 
-use pdf_extract::{
-    ColorSpace, Document, MediaBox, Object, OutputDev, OutputError, Path, PathOp, Transform,
-    output_doc,
-};
+use unpdf::render::{CleanupPreset, PageMarkerStyle, RenderOptions, to_markdown};
+use unpdf::{Document, PdfParser};
 
 use crate::converter::Converter;
 use crate::error::{Error, Result};
+
+const PAGE_MARKER_PREFIX: &str = "<!-- page ";
+const PAGE_MARKER_SUFFIX: &str = " -->";
 
 pub struct PdfConverter;
 
@@ -17,20 +18,14 @@ impl Converter for PdfConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
-        let doc = Document::load_mem(input).map_err(|e| Error::Conversion {
-            format: "pdf",
-            message: e.to_string(),
-        })?;
+        let doc = PdfParser::from_bytes(input)
+            .and_then(|parser| parser.parse())
+            .map_err(|e| Error::Conversion {
+                format: "pdf",
+                message: e.to_string(),
+            })?;
 
-        write_metadata(&doc, writer)?;
-
-        let mut collector = PageCollector::new();
-        output_doc(&doc, &mut collector).map_err(|e| Error::Conversion {
-            format: "pdf",
-            message: e.to_string(),
-        })?;
-
-        if collector.pages.is_empty() {
+        if doc.is_empty() || doc.plain_text().trim().is_empty() {
             writeln!(
                 writer,
                 "*PDF contains no extractable text (may be scanned/image-based)*"
@@ -38,365 +33,123 @@ impl Converter for PdfConverter {
             return Ok(());
         }
 
-        // Build words/lines for every page up front. This is needed so headings can be
-        // detected from font size relative to the whole document, and so repeated
-        // running headers/footers can be spotted across pages before rendering.
-        let mut pages: Vec<PageLines> = collector
-            .pages
-            .into_iter()
-            .map(|p| {
-                let words = build_words(p.glyphs);
-                let lines = build_lines(words);
-                let had_content = !lines.is_empty();
-                PageLines {
-                    lines,
-                    rects: p.rects,
-                    media_box: p.media_box,
-                    had_content,
-                }
-            })
-            .collect();
+        writeln!(writer, "{}", write_metadata(&doc))?;
 
-        let body_size = estimate_body_font_size(&pages);
-        let repeated = detect_repeated_header_footer(&pages);
-        if !repeated.is_empty() {
-            for page in &mut pages {
-                strip_repeated_lines(&mut page.lines, page.media_box, &repeated);
-            }
-        }
+        let options = RenderOptions::new()
+            .with_cleanup_preset(CleanupPreset::Standard)
+            .with_page_markers(PageMarkerStyle::Comment);
 
-        let total_pages = pages.len();
-        for (i, page) in pages.into_iter().enumerate() {
-            writeln!(writer, "## Page {}", i + 1)?;
-            writeln!(writer)?;
+        let markdown = to_markdown(&doc, &options).map_err(|e| Error::Conversion {
+            format: "pdf",
+            message: e.to_string(),
+        })?;
 
-            if !page.had_content {
-                writeln!(writer, "*Empty page*")?;
-            } else if !page.lines.is_empty() {
-                write_page_content(writer, page.lines, &page.rects, body_size)?;
-            }
+        let markdown = fix_table_separators(&markdown);
+        let markdown = strip_repeated_page_lines(&markdown, doc.page_count() as usize);
 
-            if i + 1 < total_pages {
-                writeln!(writer)?;
-                writeln!(writer, "---")?;
-                writeln!(writer)?;
-            }
-        }
-
+        write!(writer, "{markdown}")?;
         Ok(())
     }
 }
 
 // ---------------------------------------------------------------------------
-// Positional data structures
+// Markdown post-processing: fixes for known gaps in unpdf's renderer.
 // ---------------------------------------------------------------------------
 
-struct Glyph {
-    x: f64,
-    y: f64,
-    advance: f64,
-    font_size: f64,
-    ch: String,
-}
-
-/// (llx, lly, urx, ury) page bounds, in the same coordinate space as glyph positions.
-type MediaBoxDims = (f64, f64, f64, f64);
-
-struct PageData {
-    glyphs: Vec<Glyph>,
-    rects: Vec<(f64, f64, f64, f64)>, // (x, y, width, height)
-    media_box: MediaBoxDims,
-}
-
-struct PageLines {
-    lines: Vec<TextLine>,
-    rects: Vec<(f64, f64, f64, f64)>,
-    media_box: MediaBoxDims,
-    had_content: bool,
-}
-
-struct PageCollector {
-    pages: Vec<PageData>,
-    current_glyphs: Vec<Glyph>,
-    current_rects: Vec<(f64, f64, f64, f64)>,
-    current_media_box: MediaBoxDims,
-}
-
-impl PageCollector {
-    fn new() -> Self {
-        Self {
-            pages: Vec::new(),
-            current_glyphs: Vec::new(),
-            current_rects: Vec::new(),
-            current_media_box: (0.0, 0.0, 0.0, 0.0),
-        }
-    }
-
-    fn collect_rects_from_path(&mut self, ctm: &Transform, path: &Path) {
-        for op in &path.ops {
-            if let PathOp::Rect(rx, ry, rw, rh) = op {
-                let w = (rw * ctm.m11).abs();
-                let h = (rh * ctm.m22).abs();
-                // Only keep rectangles large enough to be table borders (>5pt each dimension)
-                if w > 5.0 && h > 2.0 {
-                    let x = ctm.m31 + rx * ctm.m11 + ry * ctm.m21;
-                    let y = ctm.m32 + rx * ctm.m12 + ry * ctm.m22;
-                    self.current_rects.push((x, y, w, h));
-                }
-            }
-        }
-    }
-}
-
-impl OutputDev for PageCollector {
-    fn begin_page(
-        &mut self,
-        _page_num: u32,
-        media_box: &MediaBox,
-        _art_box: Option<(f64, f64, f64, f64)>,
-    ) -> std::result::Result<(), OutputError> {
-        self.current_glyphs.clear();
-        self.current_rects.clear();
-        self.current_media_box = (media_box.llx, media_box.lly, media_box.urx, media_box.ury);
-        Ok(())
-    }
-
-    fn end_page(&mut self) -> std::result::Result<(), OutputError> {
-        self.pages.push(PageData {
-            glyphs: std::mem::take(&mut self.current_glyphs),
-            rects: std::mem::take(&mut self.current_rects),
-            media_box: self.current_media_box,
-        });
-        Ok(())
-    }
-
-    fn output_character(
-        &mut self,
-        trm: &Transform,
-        width: f64,
-        _spacing: f64,
-        font_size: f64,
-        char: &str,
-    ) -> std::result::Result<(), OutputError> {
-        let x = trm.m31;
-        let y = trm.m32;
-        // Approximate advance width in page units
-        let scale = (trm.m11 * trm.m11 + trm.m12 * trm.m12).sqrt();
-        let advance = width.abs() * font_size.abs() * scale;
-        // The effective rendered glyph height also scales with the text matrix,
-        // so use `scale` (not the raw, possibly-normalized `font_size`) as the
-        // heading/body-text size signal.
-        let rendered_size = font_size.abs() * scale;
-        self.current_glyphs.push(Glyph {
-            x,
-            y,
-            advance,
-            font_size: rendered_size,
-            ch: char.to_string(),
-        });
-        Ok(())
-    }
-
-    fn begin_word(&mut self) -> std::result::Result<(), OutputError> {
-        Ok(())
-    }
-    fn end_word(&mut self) -> std::result::Result<(), OutputError> {
-        Ok(())
-    }
-    fn end_line(&mut self) -> std::result::Result<(), OutputError> {
-        Ok(())
-    }
-
-    fn stroke(
-        &mut self,
-        ctm: &Transform,
-        _: &ColorSpace,
-        _: &[f64],
-        path: &Path,
-    ) -> std::result::Result<(), OutputError> {
-        self.collect_rects_from_path(ctm, path);
-        Ok(())
-    }
-
-    fn fill(
-        &mut self,
-        ctm: &Transform,
-        _: &ColorSpace,
-        _: &[f64],
-        path: &Path,
-    ) -> std::result::Result<(), OutputError> {
-        self.collect_rects_from_path(ctm, path);
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Word / line building
-// ---------------------------------------------------------------------------
-
-struct Word {
-    x: f64,
-    y: f64,
-    font_size: f64,
-    text: String,
-}
-
-struct TextLine {
-    y: f64,
-    /// Representative font size for the line (max of its words' sizes), used for
-    /// heading detection and to avoid merging differently-sized text into one paragraph.
-    font_size: f64,
-    words: Vec<Word>,
-}
-
-fn build_words(mut glyphs: Vec<Glyph>) -> Vec<Word> {
-    if glyphs.is_empty() {
-        return Vec::new();
-    }
-    // Sort top-to-bottom (y descending in PDF space), then left-to-right
-    glyphs.sort_by(|a, b| {
-        b.y.partial_cmp(&a.y)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
-    });
-
-    let mut words: Vec<Word> = Vec::new();
-    let mut buf = String::new();
-    let mut wx = glyphs[0].x;
-    let mut wy = glyphs[0].y;
-    let mut w_font = glyphs[0].font_size;
-    let mut prev_x_end = glyphs[0].x + glyphs[0].advance.max(1.0);
-    let mut prev_y = glyphs[0].y;
-
-    for glyph in &glyphs {
-        let y_diff = (glyph.y - prev_y).abs();
-        let x_gap = glyph.x - prev_x_end;
-        // New line (>3pt y diff) or significant horizontal gap = word boundary
-        let new_word = y_diff > 3.0 || x_gap > 4.0;
-
-        if new_word && !buf.trim().is_empty() {
-            words.push(Word {
-                x: wx,
-                y: wy,
-                font_size: w_font,
-                text: buf.trim().to_string(),
-            });
-            buf.clear();
-            wx = glyph.x;
-            wy = glyph.y;
-            w_font = glyph.font_size;
-        } else if new_word {
-            buf.clear();
-            wx = glyph.x;
-            wy = glyph.y;
-            w_font = glyph.font_size;
-        }
-
-        if buf.is_empty() {
-            wx = glyph.x;
-            wy = glyph.y;
-            w_font = glyph.font_size;
-        }
-
-        buf.push_str(&glyph.ch);
-        prev_x_end = glyph.x + glyph.advance.max(1.0);
-        prev_y = glyph.y;
-    }
-
-    if !buf.trim().is_empty() {
-        words.push(Word {
-            x: wx,
-            y: wy,
-            font_size: w_font,
-            text: buf.trim().to_string(),
-        });
-    }
-
-    words.retain(|w| !w.text.is_empty());
-    words
-}
-
-fn build_lines(mut words: Vec<Word>) -> Vec<TextLine> {
-    if words.is_empty() {
-        return Vec::new();
-    }
-    // Sort top-to-bottom
-    words.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut lines: Vec<TextLine> = Vec::new();
-    for word in words {
-        if let Some(last) = lines.last_mut()
-            && (word.y - last.y).abs() < 3.0
-        {
-            if word.font_size > last.font_size {
-                last.font_size = word.font_size;
-            }
-            last.words.push(word);
-            continue;
-        }
-        lines.push(TextLine {
-            y: word.y,
-            font_size: word.font_size,
-            words: vec![word],
-        });
-    }
-
-    for line in &mut lines {
-        line.words
-            .sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
-    }
-
-    lines
-}
-
-// ---------------------------------------------------------------------------
-// Body font size estimation & heading detection
-// ---------------------------------------------------------------------------
-
-/// Estimate the document's normal body-text font size as the most common
-/// line font size (rounded to the nearest 0.5pt), across all pages.
-fn estimate_body_font_size(pages: &[PageLines]) -> f64 {
-    let mut counts: HashMap<i64, usize> = HashMap::new();
-    for page in pages {
-        for line in &page.lines {
-            let bucket = (line.font_size * 2.0).round() as i64;
-            if bucket <= 0 {
-                continue;
-            }
-            *counts.entry(bucket).or_insert(0) += 1;
-        }
-    }
-    counts
-        .into_iter()
-        .max_by_key(|&(_, c)| c)
-        .map(|(b, _)| b as f64 / 2.0)
-        .unwrap_or(10.0)
-}
-
-/// Map a line's font size (relative to the body text size) to a heading level.
-fn heading_level_for_font(size: f64, body_size: f64) -> Option<u8> {
-    if body_size <= 0.0 || size <= 0.0 {
+/// Split a `| a | b |` table row into trimmed cells, or `None` if not one.
+fn table_cells(line: &str) -> Option<Vec<String>> {
+    let t = line.trim();
+    if t.len() < 2 || !t.starts_with('|') || !t.ends_with('|') {
         return None;
     }
-    let ratio = size / body_size;
-    if ratio >= 1.8 {
-        Some(1)
-    } else if ratio >= 1.4 {
-        Some(2)
-    } else if ratio >= 1.15 {
-        Some(3)
-    } else {
-        None
-    }
+    let inner = &t[1..t.len() - 1];
+    Some(inner.split('|').map(|c| c.trim().to_string()).collect())
 }
 
-// ---------------------------------------------------------------------------
-// Repeated header/footer detection
-// ---------------------------------------------------------------------------
+fn is_separator_row(cells: &[String]) -> bool {
+    !cells.is_empty()
+        && cells
+            .iter()
+            .all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':'))
+}
 
-/// Normalize text for cross-page repetition comparison: lowercase, and collapse
-/// any run of digits into a single `#` placeholder so page numbers like
-/// "Page 3 of 42" and "Page 4 of 42" are recognized as the same running element.
+fn render_row(cells: &[String]) -> String {
+    format!("| {} |", cells.join(" | "))
+}
+
+fn render_separator(col_count: usize) -> String {
+    render_row(&vec!["---".to_string(); col_count])
+}
+
+/// unpdf sometimes omits the `| --- | --- |` separator (invalid CommonMark)
+/// and folds a preceding heading into the table's first row (one non-empty
+/// cell). This inserts the separator and lifts a misplaced title back out.
+fn fix_table_separators(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        let Some(first_cells) = table_cells(lines[i]) else {
+            out.push(lines[i].to_string());
+            i += 1;
+            continue;
+        };
+
+        let mut block: Vec<Vec<String>> = vec![first_cells];
+        let mut j = i + 1;
+        loop {
+            if let Some(cells) = lines.get(j).and_then(|l| table_cells(l)) {
+                block.push(cells);
+                j += 1;
+                continue;
+            }
+            // A blank line can separate a spurious title row from the real table.
+            if lines.get(j).is_some_and(|l| l.trim().is_empty())
+                && let Some(cells) = lines.get(j + 1).and_then(|l| table_cells(l))
+            {
+                block.push(cells);
+                j += 2;
+                continue;
+            }
+            break;
+        }
+
+        if block.len() >= 2 && !is_separator_row(&block[1]) {
+            let first_non_empty = block[0].iter().filter(|c| !c.is_empty()).count();
+            let header_non_empty = block[1].iter().filter(|c| !c.is_empty()).count();
+            if first_non_empty == 1 && block[0].len() > 1 && header_non_empty > 1 {
+                let title = block[0]
+                    .iter()
+                    .find(|c| !c.is_empty())
+                    .cloned()
+                    .unwrap_or_default();
+                out.push(format!("## {title}"));
+                out.push(String::new());
+                block.remove(0);
+            }
+        }
+
+        if !block.is_empty() {
+            let col_count = block[0].len();
+            let has_separator = block.get(1).is_some_and(|r| is_separator_row(r));
+            out.push(render_row(&block[0]));
+            if !has_separator {
+                out.push(render_separator(col_count));
+            }
+            for row in &block[1..] {
+                out.push(render_row(row));
+            }
+        }
+
+        i = j;
+    }
+
+    out.join("\n")
+}
+
+/// Lowercase and collapse digit runs to `#` so "Page 3 of 42" and "Page 4 of
+/// 42" compare equal across pages.
 fn normalize_repeat_text(s: &str) -> String {
     let mut out = String::new();
     let mut last_was_digit = false;
@@ -414,540 +167,323 @@ fn normalize_repeat_text(s: &str) -> String {
     out
 }
 
-fn is_in_header_zone(y: f64, media_box: MediaBoxDims) -> bool {
-    let (_, lly, _, ury) = media_box;
-    let height = (ury - lly).max(1.0);
-    y > ury - height * 0.08
+fn is_page_marker(line: &str) -> bool {
+    line.starts_with(PAGE_MARKER_PREFIX) && line.ends_with(PAGE_MARKER_SUFFIX)
 }
 
-fn is_in_footer_zone(y: f64, media_box: MediaBoxDims) -> bool {
-    let (_, lly, _, ury) = media_box;
-    let height = (ury - lly).max(1.0);
-    y < lly + height * 0.08
-}
+/// Split rendered Markdown into a preamble plus one `(marker, lines)` chunk
+/// per page, using the `<!-- page N -->` markers.
+fn split_into_pages(lines: &[&str]) -> (Vec<String>, Vec<(String, Vec<String>)>) {
+    let mut preamble = Vec::new();
+    let mut pages: Vec<(String, Vec<String>)> = Vec::new();
 
-/// Find lines (running headers/footers, page numbers) whose normalized text
-/// repeats in the top/bottom margin across a majority of pages. Only meaningful
-/// with at least 3 pages.
-fn detect_repeated_header_footer(pages: &[PageLines]) -> HashSet<String> {
-    if pages.len() < 3 {
-        return HashSet::new();
+    for &line in lines {
+        if is_page_marker(line) {
+            pages.push((line.to_string(), Vec::new()));
+            continue;
+        }
+        match pages.last_mut() {
+            Some((_, page)) => page.push(line.to_string()),
+            None => preamble.push(line.to_string()),
+        }
     }
 
-    let mut seen_on: HashMap<String, HashSet<usize>> = HashMap::new();
-    for (page_idx, page) in pages.iter().enumerate() {
-        for line in &page.lines {
-            let text = line_to_string(line);
-            let trimmed = text.trim();
-            if trimmed.is_empty() || trimmed.chars().count() > 80 {
+    (preamble, pages)
+}
+
+/// unpdf has no equivalent of running-header/footer stripping. Without glyph
+/// positions this approximates it: a short line repeating (ignoring digits)
+/// as the first/last line of most pages is dropped.
+fn strip_repeated_page_lines(markdown: &str, page_count: usize) -> String {
+    if page_count < 3 {
+        return markdown.to_string();
+    }
+
+    let lines: Vec<&str> = markdown.lines().collect();
+    let (preamble, mut pages) = split_into_pages(&lines);
+    if pages.len() < 3 {
+        return markdown.to_string();
+    }
+
+    // A long line is body text, not a running header/footer, even at page edges.
+    const MAX_CANDIDATE_LEN: usize = 80;
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for (_, page) in &pages {
+        let mut candidates: Vec<String> = Vec::new();
+        for l in [
+            page.iter().find(|l| !l.trim().is_empty()),
+            page.iter().rev().find(|l| !l.trim().is_empty()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if l.trim().chars().count() > MAX_CANDIDATE_LEN {
                 continue;
             }
-            if !is_in_header_zone(line.y, page.media_box)
-                && !is_in_footer_zone(line.y, page.media_box)
-            {
-                continue;
+            let norm = normalize_repeat_text(l);
+            if !norm.is_empty() && !candidates.contains(&norm) {
+                candidates.push(norm);
             }
-            let norm = normalize_repeat_text(trimmed);
-            if norm.is_empty() {
-                continue;
-            }
-            seen_on.entry(norm).or_default().insert(page_idx);
+        }
+        for c in candidates {
+            *counts.entry(c).or_insert(0) += 1;
         }
     }
 
     let threshold = (pages.len() * 6 / 10).max(3);
-    seen_on
+    let repeated: std::collections::HashSet<String> = counts
         .into_iter()
-        .filter(|(_, on_pages)| on_pages.len() >= threshold)
+        .filter(|&(_, n)| n >= threshold)
         .map(|(text, _)| text)
-        .collect()
-}
-
-fn strip_repeated_lines(
-    lines: &mut Vec<TextLine>,
-    media_box: MediaBoxDims,
-    repeated: &HashSet<String>,
-) {
+        .collect();
     if repeated.is_empty() {
-        return;
-    }
-    lines.retain(|line| {
-        let text = line_to_string(line);
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return true;
-        }
-        if !is_in_header_zone(line.y, media_box) && !is_in_footer_zone(line.y, media_box) {
-            return true;
-        }
-        !repeated.contains(&normalize_repeat_text(trimmed))
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Table detection
-// ---------------------------------------------------------------------------
-
-/// Cluster a list of x-positions into column boundaries (within `tol` points).
-fn cluster_columns(positions: &[f64], tol: f64) -> Vec<f64> {
-    let mut sorted = positions.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    sorted.dedup_by(|a, b| (*a - *b).abs() < tol);
-    sorted
-}
-
-/// Assign a word to the nearest column index.
-fn nearest_col(x: f64, cols: &[f64]) -> usize {
-    cols.iter()
-        .enumerate()
-        .min_by(|&(_, a), &(_, b)| {
-            (x - a)
-                .abs()
-                .partial_cmp(&(x - b).abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(i, _)| i)
-        .unwrap_or(0)
-}
-
-/// Try to interpret a slice of consecutive lines as a table.
-/// Returns Some(rows) if the lines look like a table, None otherwise.
-fn try_as_table(lines: &[&TextLine]) -> Option<Vec<Vec<String>>> {
-    if lines.len() < 2 {
-        return None;
+        return markdown.to_string();
     }
 
-    // Collect all word x-start positions
-    let all_x: Vec<f64> = lines
-        .iter()
-        .flat_map(|l| l.words.iter().map(|w| w.x))
-        .collect();
-
-    let cols = cluster_columns(&all_x, 8.0);
-    if cols.len() < 2 {
-        return None;
-    }
-
-    // Count how many lines have words aligned to ≥2 distinct columns
-    let aligned = lines
-        .iter()
-        .filter(|line| {
-            let mut used_cols = HashSet::new();
-            for w in &line.words {
-                used_cols.insert(nearest_col(w.x, &cols));
-            }
-            used_cols.len() >= 2
-        })
-        .count();
-
-    // Require ≥ 2/3 of lines to be multi-column, and at least 2 such lines
-    if aligned < 2 || aligned * 3 < lines.len() * 2 {
-        return None;
-    }
-
-    // Build table rows: merge words that fall into the same cell
-    let rows: Vec<Vec<String>> = lines
-        .iter()
-        .map(|line| {
-            let mut cells: Vec<String> = vec![String::new(); cols.len()];
-            for word in &line.words {
-                let ci = nearest_col(word.x, &cols);
-                if !cells[ci].is_empty() {
-                    cells[ci].push(' ');
-                }
-                cells[ci].push_str(&word.text);
-            }
-            cells
-        })
-        .collect();
-
-    Some(rows)
-}
-
-/// Check whether rectangles suggest a grid (table borders).
-fn rects_suggest_table(rects: &[(f64, f64, f64, f64)]) -> bool {
-    rects.len() >= 4
-}
-
-// ---------------------------------------------------------------------------
-// Markdown rendering
-// ---------------------------------------------------------------------------
-
-fn render_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if col_count == 0 {
-        return Ok(());
-    }
-
-    for (i, row) in rows.iter().enumerate() {
-        let cells: Vec<String> = (0..col_count)
-            .map(|ci| {
-                row.get(ci)
-                    .map(|s| s.replace('|', "\\|"))
-                    .unwrap_or_default()
-            })
-            .collect();
-        writeln!(writer, "| {} |", cells.join(" | "))?;
-
-        // Insert separator after first row (header)
-        if i == 0 {
-            let sep: Vec<&str> = (0..col_count).map(|_| "---").collect();
-            writeln!(writer, "| {} |", sep.join(" | "))?;
-        }
-    }
-    writeln!(writer)?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Main page content renderer
-// ---------------------------------------------------------------------------
-
-/// Compute the median y-gap between consecutive lines (typical line height).
-fn typical_line_spacing(lines: &[TextLine]) -> f64 {
-    if lines.len() < 2 {
-        return 14.0;
-    }
-    let mut gaps: Vec<f64> = lines
-        .windows(2)
-        .map(|w| (w[0].y - w[1].y).abs())
-        .filter(|&g| g > 1.0)
-        .collect();
-    if gaps.is_empty() {
-        return 14.0;
-    }
-    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    gaps[gaps.len() / 2]
-}
-
-fn line_to_string(line: &TextLine) -> String {
-    line.words
-        .iter()
-        .map(|w| w.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn is_bullet_line(s: &str) -> bool {
-    s.starts_with('•')
-        || s.starts_with('●')
-        || s.starts_with('○')
-        || s.starts_with('–')
-        || s.starts_with("- ")
-        || s.starts_with("* ")
-}
-
-fn write_page_content(
-    writer: &mut dyn Write,
-    lines: Vec<TextLine>,
-    rects: &[(f64, f64, f64, f64)],
-    body_size: f64,
-) -> Result<()> {
-    let has_table_rects = rects_suggest_table(rects);
-
-    if lines.is_empty() {
-        return Ok(());
-    }
-
-    let spacing = typical_line_spacing(&lines);
-    // A gap larger than this threshold signals a paragraph break.
-    // Use 1.4× median spacing; tighten to avoid joining across section breaks.
-    let para_gap = spacing * 1.4;
-
-    let mut i = 0;
-    while i < lines.len() {
-        // --- Table detection: try to grow a table region from i ---
-        let mut table_end = i + 1;
-        while table_end <= lines.len() {
-            let slice: Vec<&TextLine> = lines[i..table_end].iter().collect();
-            if try_as_table(&slice).is_none() && !(has_table_rects && table_end - i >= 2) {
-                break;
-            }
-            table_end += 1;
-        }
-        table_end -= 1;
-
-        if table_end > i + 1 {
-            let slice: Vec<&TextLine> = lines[i..table_end].iter().collect();
-            if let Some(rows) = try_as_table(&slice) {
-                render_table(writer, &rows)?;
-                i = table_end;
-                continue;
-            }
-        }
-
-        // --- Special single-line elements (bullets, numbered lists) ---
-        let first_text = line_to_string(&lines[i]);
-        let first_trimmed = first_text.trim();
-
-        if is_bullet_line(first_trimmed) {
-            let content = if first_trimmed.starts_with("- ") || first_trimmed.starts_with("* ") {
-                first_trimmed[2..].trim()
-            } else {
-                first_trimmed[first_trimmed.chars().next().unwrap().len_utf8()..].trim()
-            };
-            writeln!(writer, "- {content}")?;
-            i += 1;
-            continue;
-        }
-
-        if let Some(content) = strip_numbered_prefix(first_trimmed) {
-            writeln!(writer, "1. {content}")?;
-            i += 1;
-            continue;
-        }
-
-        // --- Paragraph grouping: accumulate lines until a break condition ---
-        let mut para_lines: Vec<&TextLine> = vec![&lines[i]];
-        let mut j = i + 1;
-
-        while j < lines.len() {
-            let y_gap = (lines[j - 1].y - lines[j].y).abs();
-
-            // Large vertical gap → paragraph break
-            if y_gap > para_gap {
-                break;
-            }
-
-            // A jump in font size (e.g. a heading immediately followed by body
-            // text with little vertical gap) also signals a break.
-            if (lines[j].font_size - para_lines[0].font_size).abs() > 0.5 {
-                break;
-            }
-
-            let next_text = line_to_string(&lines[j]);
-            let next_trimmed = next_text.trim();
-
-            // Next line is a list item or starts a table → break
-            if is_bullet_line(next_trimmed) || strip_numbered_prefix(next_trimmed).is_some() {
-                break;
-            }
-            if j + 1 < lines.len() {
-                let two: Vec<&TextLine> = lines[j..j + 2].iter().collect();
-                if try_as_table(&two).is_some() {
-                    break;
-                }
-            }
-
-            para_lines.push(&lines[j]);
-            j += 1;
-        }
-
-        write_paragraph(writer, &para_lines, body_size)?;
-        i = j;
-    }
-
-    Ok(())
-}
-
-/// Join a group of consecutive lines into a single paragraph and write it.
-fn write_paragraph(writer: &mut dyn Write, lines: &[&TextLine], body_size: f64) -> Result<()> {
-    let mut para = String::new();
-
-    for line in lines {
-        let t = line_to_string(line);
-        let t = t.trim();
-        if t.is_empty() {
-            continue;
-        }
-
-        // Handle hyphenated line breaks: "implemen-" + "tation" → "implementation"
-        if para.ends_with('-') {
-            let prev_alpha = para
-                .chars()
-                .rev()
-                .nth(1)
-                .map(|c| c.is_alphabetic())
-                .unwrap_or(false);
-            let next_lower = t.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
-            if prev_alpha && next_lower {
-                para.pop(); // remove hyphen
-                para.push_str(t);
-                continue;
-            }
-        }
-
-        if !para.is_empty() {
-            para.push(' ');
-        }
-        para.push_str(t);
-    }
-
-    let para = para.trim().to_string();
-    if para.is_empty() {
-        return Ok(());
-    }
-
-    // Single isolated line → check for heading, preferring the font-size signal
-    // (relative to body text) over the punctuation/capitalization heuristic.
-    if lines.len() == 1 {
-        if let Some(level) = heading_level_for_font(lines[0].font_size, body_size)
-            && para.chars().count() <= 200
+    for (_, page) in &mut pages {
+        if let Some(idx) = page.iter().position(|l| !l.trim().is_empty())
+            && repeated.contains(&normalize_repeat_text(&page[idx]))
         {
-            let hashes = "#".repeat(level as usize);
-            writeln!(writer, "{hashes} {para}")?;
-            writeln!(writer)?;
-            return Ok(());
+            page[idx].clear();
         }
-
-        if is_heading_candidate(&para) {
-            writeln!(writer, "### {para}")?;
-            writeln!(writer)?;
-            return Ok(());
+        if let Some(idx) = page.iter().rposition(|l| !l.trim().is_empty())
+            && repeated.contains(&normalize_repeat_text(&page[idx]))
+        {
+            page[idx].clear();
         }
     }
 
-    writeln!(writer, "{para}")?;
-    writeln!(writer)?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Metadata
-// ---------------------------------------------------------------------------
-
-fn write_metadata(doc: &Document, writer: &mut dyn Write) -> Result<()> {
-    let info = extract_info(doc);
-    if info.is_empty() {
-        return Ok(());
+    let mut out = preamble;
+    for (marker, page) in pages {
+        out.push(marker);
+        out.extend(page);
     }
 
-    let title = info.iter().find(|(k, _)| k == "Title").map(|(_, v)| v);
-    if let Some(title) = title {
-        if !title.is_empty() {
-            writeln!(writer, "# {title}")?;
-        } else {
-            writeln!(writer, "# PDF Document")?;
-        }
-    } else {
-        writeln!(writer, "# PDF Document")?;
-    }
-    writeln!(writer)?;
-
-    let mut has_meta = false;
-    for (key, value) in &info {
-        if key == "Title" || value.is_empty() {
+    // Collapse blank runs left behind by cleared lines.
+    let mut collapsed: Vec<String> = Vec::with_capacity(out.len());
+    for line in out {
+        if line.trim().is_empty() && collapsed.last().is_some_and(|l: &String| l.trim().is_empty())
+        {
             continue;
         }
-        writeln!(writer, "- **{key}**: {value}")?;
-        has_meta = true;
+        collapsed.push(line);
     }
-
-    if has_meta {
-        writeln!(writer)?;
-    }
-
-    writeln!(writer, "---")?;
-    writeln!(writer)?;
-
-    Ok(())
+    collapsed.join("\n")
 }
 
-fn extract_info(doc: &Document) -> Vec<(String, String)> {
-    let mut info = Vec::new();
+fn write_metadata(doc: &Document) -> String {
+    let meta = &doc.metadata;
+    let mut out = String::new();
 
-    let info_dict = doc
-        .trailer
-        .get(b"Info")
-        .ok()
-        .and_then(|obj| obj.as_reference().ok())
-        .and_then(|id| doc.get_dictionary(id).ok());
-
-    let Some(dict) = info_dict else {
-        return info;
-    };
-
-    let keys = [
-        (b"Title".as_slice(), "Title"),
-        (b"Author", "Author"),
-        (b"Subject", "Subject"),
-        (b"Creator", "Creator"),
-        (b"Producer", "Producer"),
-        (b"CreationDate", "Created"),
-        (b"ModDate", "Modified"),
-    ];
-
-    for (pdf_key, label) in keys {
-        if let Ok(obj) = dict.get(pdf_key) {
-            let text = pdf_object_to_string(obj);
-            if !text.is_empty() {
-                info.push((label.to_string(), text));
-            }
+    match &meta.title {
+        Some(title) if !title.trim().is_empty() => {
+            out.push_str(&format!("# {title}\n\n"));
         }
+        _ => out.push_str("# PDF Document\n\n"),
     }
 
-    info
-}
+    let mut fields: Vec<(&str, String)> = Vec::new();
+    if let Some(author) = &meta.author
+        && !author.trim().is_empty()
+    {
+        fields.push(("Author", author.clone()));
+    }
+    if let Some(subject) = &meta.subject
+        && !subject.trim().is_empty()
+    {
+        fields.push(("Subject", subject.clone()));
+    }
+    if let Some(creator) = &meta.creator
+        && !creator.trim().is_empty()
+    {
+        fields.push(("Creator", creator.clone()));
+    }
+    if let Some(producer) = &meta.producer
+        && !producer.trim().is_empty()
+    {
+        fields.push(("Producer", producer.clone()));
+    }
+    if let Some(created) = &meta.created {
+        fields.push(("Created", created.to_rfc3339()));
+    }
+    if let Some(modified) = &meta.modified {
+        fields.push(("Modified", modified.to_rfc3339()));
+    }
 
-fn pdf_object_to_string(obj: &Object) -> String {
-    match obj {
-        Object::String(bytes, _) => {
-            if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-                let chars: Vec<u16> = bytes[2..]
-                    .chunks(2)
-                    .filter_map(|c| {
-                        if c.len() == 2 {
-                            Some(u16::from_be_bytes([c[0], c[1]]))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                String::from_utf16_lossy(&chars)
-            } else {
-                String::from_utf8_lossy(bytes).to_string()
-            }
-        }
-        _ => String::new(),
+    for (label, value) in &fields {
+        out.push_str(&format!("- **{label}**: {value}\n"));
     }
-}
+    if !fields.is_empty() {
+        out.push('\n');
+    }
 
-// ---------------------------------------------------------------------------
-// Text helpers (shared with structured text path)
-// ---------------------------------------------------------------------------
-
-fn is_heading_candidate(line: &str) -> bool {
-    let len = line.len();
-    if !(2..=80).contains(&len) {
-        return false;
-    }
-    let last = line.chars().last().unwrap();
-    if matches!(last, '.' | ',' | ';' | '!' | '?' | ')') {
-        return false;
-    }
-    let first = line.chars().next().unwrap();
-    if !first.is_uppercase() && !first.is_ascii_digit() {
-        return false;
-    }
-    line.split_whitespace().count() <= 10
-}
-
-fn strip_numbered_prefix(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
-    let rest = trimmed.trim_start_matches(|c: char| c.is_ascii_digit());
-    if rest.len() < trimmed.len() {
-        if let Some(rest) = rest.strip_prefix(". ") {
-            return Some(rest);
-        }
-        if let Some(rest) = rest.strip_prefix(") ") {
-            return Some(rest);
-        }
-    }
-    None
+    out.push_str("---\n");
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_fix_table_separators_inserts_missing_separator() {
+        let md = "| Name | Age |\n| Alice | 30 |\n| Bob | 40 |";
+        let out = fix_table_separators(md);
+        assert_eq!(
+            out,
+            "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 40 |"
+        );
+    }
+
+    #[test]
+    fn test_fix_table_separators_leaves_existing_separator_alone() {
+        let md = "| Name | Age |\n| --- | --- |\n| Alice | 30 |";
+        assert_eq!(fix_table_separators(md), md);
+    }
+
+    #[test]
+    fn test_fix_table_separators_lifts_title_row_out_of_table() {
+        let md = "| Sales Report |  |  |  |\n\n| Name | Region | Q1 | Q2 |\n| Alice | East | 100 | 120 |";
+        let out = fix_table_separators(md);
+        assert_eq!(
+            out,
+            "## Sales Report\n\n| Name | Region | Q1 | Q2 |\n| --- | --- | --- | --- |\n| Alice | East | 100 | 120 |"
+        );
+    }
+
+    #[test]
+    fn test_fix_table_separators_does_not_lift_multi_cell_first_row() {
+        // First row has more than one non-empty cell, so it's a real header,
+        // not a misplaced title — must not be pulled out of the table.
+        let md = "| Region | Total |\n| East | 120 |\n| West | 95 |";
+        let out = fix_table_separators(md);
+        assert_eq!(
+            out,
+            "| Region | Total |\n| --- | --- |\n| East | 120 |\n| West | 95 |"
+        );
+    }
+
+    #[test]
+    fn test_fix_table_separators_single_row_gets_separator() {
+        let md = "| Name | Age |";
+        assert_eq!(fix_table_separators(md), "| Name | Age |\n| --- | --- |");
+    }
+
+    #[test]
+    fn test_fix_table_separators_two_independent_tables() {
+        let md = "| A | B |\n| 1 | 2 |\n\nSome paragraph in between.\n\n| C | D |\n| 3 | 4 |";
+        let out = fix_table_separators(md);
+        assert_eq!(
+            out,
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n\nSome paragraph in between.\n\n| C | D |\n| --- | --- |\n| 3 | 4 |"
+        );
+    }
+
+    #[test]
+    fn test_table_cells_none_for_plain_text() {
+        assert_eq!(table_cells("It costs $5 or $10 depending on size."), None);
+        assert_eq!(table_cells("no leading pipe |"), None);
+        assert_eq!(table_cells("| no trailing pipe"), None);
+    }
+
+    #[test]
+    fn test_table_cells_parses_row() {
+        assert_eq!(
+            table_cells("| Name | Age |"),
+            Some(vec!["Name".to_string(), "Age".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_is_separator_row() {
+        assert!(is_separator_row(&["---".to_string(), ":--:".to_string()]));
+        assert!(!is_separator_row(&["Name".to_string(), "---".to_string()]));
+        assert!(!is_separator_row(&[]));
+    }
+
+    #[test]
+    fn test_normalize_repeat_text() {
+        assert_eq!(normalize_repeat_text("Page 3 of 42"), "page # of #");
+        assert_eq!(normalize_repeat_text("  Confidential  "), "confidential");
+    }
+
+    #[test]
+    fn test_strip_repeated_page_lines_removes_running_header() {
+        let md = "<!-- page 1 -->\n\nConfidential\nContent unique to the first page here.\n\
+                  <!-- page 2 -->\n\nConfidential\nContent unique to the second page here.\n\
+                  <!-- page 3 -->\n\nConfidential\nContent unique to the third page here.";
+        let out = strip_repeated_page_lines(md, 3);
+        assert!(!out.to_lowercase().contains("confidential"));
+        assert!(out.contains("first page"));
+        assert!(out.contains("second page"));
+        assert!(out.contains("third page"));
+    }
+
+    #[test]
+    fn test_strip_repeated_page_lines_ignores_middle_line_repetition() {
+        // "Note" repeats on every page but sits in the middle, not at a page
+        // edge, so it's not a header/footer candidate and must survive.
+        let md = "<!-- page 1 -->\n\nFirst line one.\nNote\nLast line one.\n\
+                  <!-- page 2 -->\n\nFirst line two.\nNote\nLast line two.\n\
+                  <!-- page 3 -->\n\nFirst line three.\nNote\nLast line three.";
+        let out = strip_repeated_page_lines(md, 3);
+        assert_eq!(out.matches("Note").count(), 3);
+    }
+
+    #[test]
+    fn test_strip_repeated_page_lines_requires_majority() {
+        // Repeats on only 2 of 5 pages; threshold is (5*6/10).max(3) == 3, so
+        // it must be left alone.
+        let md = "<!-- page 1 -->\n\nBody A.\nStamp\n\
+                  <!-- page 2 -->\n\nBody B.\nStamp\n\
+                  <!-- page 3 -->\n\nBody C.\nZeta\n\
+                  <!-- page 4 -->\n\nBody D.\nTheta\n\
+                  <!-- page 5 -->\n\nBody E.\nOmega";
+        let out = strip_repeated_page_lines(md, 5);
+        assert_eq!(out.matches("Stamp").count(), 2);
+    }
+
+    #[test]
+    fn test_strip_repeated_page_lines_removes_running_footer() {
+        let md = "<!-- page 1 -->\n\nA paragraph describing findings specific to the first page of the report.\nConfidential - Page 1\n\
+                  <!-- page 2 -->\n\nA different paragraph covering results found only on the second page.\nConfidential - Page 2\n\
+                  <!-- page 3 -->\n\nYet another paragraph with content that only appears on the third page.\nConfidential - Page 3";
+        let out = strip_repeated_page_lines(md, 3);
+        assert!(out.contains("first page of the report"));
+        assert!(out.contains("second page"));
+        assert!(out.contains("third page"));
+        assert!(
+            !out.to_lowercase().contains("confidential"),
+            "repeated footer should have been stripped:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_strip_repeated_page_lines_keeps_long_page_unique_first_line() {
+        let md = "<!-- page 1 -->\n\nBody text unique to page 1 describing something important. A second line of body text on page 1.\n\
+                  <!-- page 2 -->\n\nBody text unique to page 2 describing something important. A second line of body text on page 2.\n\
+                  <!-- page 3 -->\n\nBody text unique to page 3 describing something important. A second line of body text on page 3.";
+        let out = strip_repeated_page_lines(md, 3);
+        assert!(out.contains("Body text unique to page 1 describing something important."));
+        assert!(out.contains("Body text unique to page 2 describing something important."));
+        assert!(out.contains("Body text unique to page 3 describing something important."));
+    }
+
+    #[test]
+    fn test_strip_repeated_page_lines_below_threshold_pages_untouched() {
+        let md = "<!-- page 1 -->\n\nBody one.\nConfidential\n\
+                  <!-- page 2 -->\n\nBody two.\nConfidential";
+        let out = strip_repeated_page_lines(md, 2);
+        assert_eq!(out, md, "fewer than 3 pages should be left untouched");
+    }
+
     /// Build a minimal, valid single-content-stream-per-page PDF using only
-    /// the built-in Helvetica font, for exercising the layout-based parser.
-    fn make_pdf(pages: &[&str], media_box: &str) -> Vec<u8> {
+    /// the built-in Helvetica font.
+    fn make_pdf(pages: &[&str], media_box: &str, info: Option<&str>) -> Vec<u8> {
         let n_pages = pages.len();
         let font_obj_num = 3 + n_pages * 2;
+        let info_obj_num = font_obj_num + 1;
         let kids: Vec<String> = (0..n_pages).map(|i| format!("{} 0 R", 3 + i * 2)).collect();
 
         let mut objs: Vec<(usize, String)> = Vec::new();
@@ -973,7 +509,7 @@ mod tests {
                 content_num,
                 format!(
                     "<< /Length {} >>\nstream\n{}\nendstream",
-                    content.as_bytes().len(),
+                    content.len(),
                     content
                 ),
             ));
@@ -982,14 +518,17 @@ mod tests {
             font_obj_num,
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
         ));
+        if let Some(info) = info {
+            objs.push((info_obj_num, info.to_string()));
+        }
 
         let mut out = String::from("%PDF-1.4\n");
         let mut offsets = vec![0usize; objs.len() + 2];
         for (num, body) in &objs {
-            offsets[*num] = out.as_bytes().len();
+            offsets[*num] = out.len();
             out.push_str(&format!("{num} 0 obj\n{body}\nendobj\n"));
         }
-        let xref_offset = out.as_bytes().len();
+        let xref_offset = out.len();
         let max_num = objs.iter().map(|(n, _)| *n).max().unwrap();
         out.push_str(&format!("xref\n0 {}\n", max_num + 1));
         out.push_str("0000000000 65535 f \n");
@@ -999,77 +538,112 @@ mod tests {
                 offsets.get(i).copied().unwrap_or(0)
             ));
         }
+        let info_entry = if info.is_some() {
+            format!(" /Info {info_obj_num} 0 R")
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
+            "trailer\n<< /Size {} /Root 1 0 R{info_entry} >>\nstartxref\n{}\n%%EOF",
             max_num + 1,
             xref_offset
         ));
         out.into_bytes()
     }
 
-    fn convert(pages: &[&str], media_box: &str) -> String {
-        let pdf = make_pdf(pages, media_box);
+    fn convert(input: &[u8]) -> String {
         let mut out = Vec::new();
-        PdfConverter.convert(&pdf, &mut out).unwrap();
+        PdfConverter.convert(input, &mut out).unwrap();
         String::from_utf8(out).unwrap()
     }
 
+    /// Japanese PDF (Identity-H CIDFontType0, no `/ToUnicode`) — the shape that
+    /// silently drops all text without a CIDSystemInfo/embedded-cmap fallback.
+    const JA_SAMPLE: &[u8] =
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pdf/sample_ja.pdf"));
+
     #[test]
-    fn test_large_font_line_becomes_h1() {
-        let page = "BT /F1 24 Tf 20 260 Td (Big Heading) Tj ET\n\
-             BT /F1 10 Tf 20 220 Td (This is normal body text on the page.) Tj ET";
-        let out = convert(&[page], "[0 0 300 300]");
-        assert!(out.contains("# Big Heading"), "missing h1 in:\n{out}");
+    fn test_cjk_text_without_to_unicode_is_preserved() {
+        let out = convert(JA_SAMPLE);
         assert!(
-            out.contains("This is normal body text on the page."),
-            "missing body text in:\n{out}"
+            out.contains("日本語"),
+            "Japanese text missing from output:\n{out}"
+        );
+        assert!(
+            out.contains("マルチバイト"),
+            "multibyte text missing from output:\n{out}"
         );
     }
 
     #[test]
-    fn test_medium_font_line_becomes_h3() {
-        let page = "BT /F1 10 Tf 20 260 Td (This is normal body text setting the baseline.) Tj ET\n\
-             BT /F1 13 Tf 20 220 Td (Subheading) Tj ET\n\
-             BT /F1 10 Tf 20 200 Td (More normal body text here to confirm.) Tj ET";
-        let out = convert(&[page], "[0 0 300 300]");
-        assert!(out.contains("### Subheading"), "missing h3 in:\n{out}");
+    fn test_basic_text_extraction() {
+        let page = "BT /F1 10 Tf 20 220 Td (Hello world.) Tj ET";
+        let out = convert(&make_pdf(&[page], "[0 0 300 300]", None));
+        assert!(out.contains("Hello world."), "missing body text in:\n{out}");
     }
 
     #[test]
-    fn test_repeated_footer_stripped_across_pages() {
-        let mk = |body: &str, n: u32| {
-            format!(
-                "BT /F1 10 Tf 20 220 Td ({body}) Tj ET\nBT /F1 8 Tf 20 10 Td (Confidential - Page {n}) Tj ET"
-            )
-        };
-        let p1 = mk("Body text on page one.", 1);
-        let p2 = mk("Body text on page two.", 2);
-        let p3 = mk("Body text on page three.", 3);
-        let out = convert(&[p1.as_str(), p2.as_str(), p3.as_str()], "[0 0 300 300]");
+    fn test_metadata_is_rendered() {
+        let page = "BT /F1 10 Tf 20 220 Td (Body.) Tj ET";
+        let info = "<< /Title (My Title) /Author (Jane Doe) >>";
+        let out = convert(&make_pdf(&[page], "[0 0 300 300]", Some(info)));
+        assert!(out.contains("# My Title"), "missing title in:\n{out}");
         assert!(
-            !out.to_lowercase().contains("confidential"),
-            "repeated footer should have been stripped:\n{out}"
+            out.contains("**Author**: Jane Doe"),
+            "missing author in:\n{out}"
         );
-        assert!(out.contains("Body text on page one."));
-        assert!(out.contains("Body text on page two."));
-        assert!(out.contains("Body text on page three."));
     }
 
     #[test]
-    fn test_footer_not_stripped_below_page_threshold() {
-        // Only 2 pages: repetition detection requires >= 3 pages, so a
-        // shared footer line should be left intact rather than guessed away.
-        let mk = |body: &str| {
-            format!(
-                "BT /F1 10 Tf 20 220 Td ({body}) Tj ET\nBT /F1 8 Tf 20 10 Td (Confidential) Tj ET"
-            )
-        };
-        let p1 = mk("Body text on page one.");
-        let p2 = mk("Body text on page two.");
-        let out = convert(&[p1.as_str(), p2.as_str()], "[0 0 300 300]");
+    fn test_no_extractable_text_message() {
+        let out = convert(&make_pdf(&[""], "[0 0 300 300]", None));
         assert!(
-            out.to_lowercase().contains("confidential"),
-            "footer should be kept with fewer than 3 pages:\n{out}"
+            out.contains("no extractable text"),
+            "missing fallback message in:\n{out}"
         );
+    }
+
+    #[test]
+    fn test_multi_page_pdf_has_page_markers_and_content() {
+        let p1 = "BT /F1 10 Tf 20 220 Td (Page one content.) Tj ET";
+        let p2 = "BT /F1 10 Tf 20 220 Td (Page two content.) Tj ET";
+        let out = convert(&make_pdf(&[p1, p2], "[0 0 300 300]", None));
+        assert!(out.contains("<!-- page 1 -->"));
+        assert!(out.contains("<!-- page 2 -->"));
+        assert!(out.contains("Page one content."));
+        assert!(out.contains("Page two content."));
+    }
+
+    #[test]
+    fn test_invalid_pdf_returns_error() {
+        let mut out = Vec::new();
+        assert!(PdfConverter.convert(b"not a pdf file", &mut out).is_err());
+    }
+
+    #[test]
+    fn test_write_metadata_no_info_falls_back() {
+        let doc = unpdf::Document::new();
+        let out = write_metadata(&doc);
+        assert!(out.starts_with("# PDF Document\n\n"));
+        assert!(out.trim_end().ends_with("---"));
+    }
+
+    #[test]
+    fn test_write_metadata_whitespace_title_falls_back() {
+        let mut doc = unpdf::Document::new();
+        doc.metadata.title = Some("   ".to_string());
+        let out = write_metadata(&doc);
+        assert!(out.starts_with("# PDF Document\n\n"));
+    }
+
+    #[test]
+    fn test_write_metadata_only_present_fields_are_listed() {
+        let mut doc = unpdf::Document::new();
+        doc.metadata.title = Some("Report".to_string());
+        doc.metadata.subject = Some("Q1 results".to_string());
+        let out = write_metadata(&doc);
+        assert!(out.contains("# Report"));
+        assert!(out.contains("**Subject**: Q1 results"));
+        assert!(!out.contains("Author"));
     }
 }

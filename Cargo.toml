@@ -72,7 +72,7 @@ markdown_text = ["dep:mq-markdown"]
 mediawiki = []
 ocr = ["dep:leptess"]
 org = []
-pdf = ["dep:pdf-extract"]
+pdf = ["dep:unpdf"]
 powerpoint = ["dep:zip", "dep:quick-xml"]
 rst = []
 sqlite = ["dep:rusqlite"]
@@ -99,13 +99,13 @@ kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.24", optional = true}
 mq-markdown = {version = "0.8.1", optional = true, features = ["html-to-markdown", "json"]}
-pdf-extract = {version = "0.12", optional = true}
 quick-xml = {version = "0.41", optional = true}
 rusqlite = {version = "0.40", optional = true, features = ["bundled"]}
 serde_json = {version = "1", optional = true, features = ["preserve_order"]}
 serde_yaml = {version = "0.9", optional = true}
 tar = {version = "0.4", optional = true}
 toml = {version = "1.1", optional = true}
+unpdf = {version = "0.13", optional = true}
 zip = {version = "8.6", optional = true, default-features = false, features = ["deflate"]}
 
 [dev-dependencies]

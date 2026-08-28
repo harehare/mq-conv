@@ -286,6 +286,8 @@ fn write_elements_as_table(
 
 fn escape_pipe(s: &str) -> String {
     s.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
 }
 
 fn local_name(name: &[u8]) -> String {

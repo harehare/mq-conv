@@ -263,10 +263,9 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                     "pPr" if in_paragraph => {
                         in_ppr = true;
                         if let Some(attr) =
-                            e.attributes().flatten().find(|a| a.key.as_ref() == b"lvl")
+                            e.attributes().flatten().find(|a| a.key.as_ref() == "lvl")
                         {
-                            current_paragraph.level =
-                                String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
+                            current_paragraph.level = attr.value.parse().unwrap_or(0);
                         }
                     }
                     "r" if in_paragraph => {
@@ -282,13 +281,13 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                         // Check attributes for bold/italic
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"b" => {
+                                "b" => {
                                     current_run.bold =
-                                        attr.value.as_ref() == b"1" || attr.value.as_ref() == b"true";
+                                        attr.value.as_ref() == "1" || attr.value.as_ref() == "true";
                                 }
-                                b"i" => {
+                                "i" => {
                                     current_run.italic =
-                                        attr.value.as_ref() == b"1" || attr.value.as_ref() == b"true";
+                                        attr.value.as_ref() == "1" || attr.value.as_ref() == "true";
                                 }
                                 _ => {}
                             }
@@ -315,9 +314,8 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                 match local.as_str() {
                     "ph" => {
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"type" {
-                                shape_type =
-                                    String::from_utf8_lossy(&attr.value).to_string();
+                            if attr.key.as_ref() == "type" {
+                                shape_type = attr.value.to_string();
                             }
                         }
                         if shape_type.is_empty() {
@@ -326,10 +324,9 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                     }
                     "pPr" if in_paragraph => {
                         if let Some(attr) =
-                            e.attributes().flatten().find(|a| a.key.as_ref() == b"lvl")
+                            e.attributes().flatten().find(|a| a.key.as_ref() == "lvl")
                         {
-                            current_paragraph.level =
-                                String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
+                            current_paragraph.level = attr.value.parse().unwrap_or(0);
                         }
                     }
                     "buChar" | "buAutoNum" | "buFont" if in_ppr => {
@@ -339,13 +336,13 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                         // Self-closing rPr
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"b" => {
+                                "b" => {
                                     current_run.bold =
-                                        attr.value.as_ref() == b"1" || attr.value.as_ref() == b"true";
+                                        attr.value.as_ref() == "1" || attr.value.as_ref() == "true";
                                 }
-                                b"i" => {
+                                "i" => {
                                     current_run.italic =
-                                        attr.value.as_ref() == b"1" || attr.value.as_ref() == b"true";
+                                        attr.value.as_ref() == "1" || attr.value.as_ref() == "true";
                                 }
                                 _ => {}
                             }
@@ -355,7 +352,7 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                 }
             }
             Ok(Event::Text(e)) => {
-                let decoded = e.decode().unwrap_or_default().to_string();
+                let decoded = e.to_string();
                 if in_table_cell {
                     cell_text.push_str(&decoded);
                 } else if in_text {
@@ -506,12 +503,11 @@ fn read_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Resul
     Ok(content)
 }
 
-fn local_name(name: &[u8]) -> String {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    if let Some(pos) = s.rfind(':') {
-        s[pos + 1..].to_string()
+fn local_name(name: &str) -> String {
+    if let Some(pos) = name.rfind(':') {
+        name[pos + 1..].to_string()
     } else {
-        s.to_string()
+        name.to_string()
     }
 }
 

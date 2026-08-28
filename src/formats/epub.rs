@@ -107,10 +107,10 @@ fn find_opf_path(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String>
 
     loop {
         match reader.read_event() {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"rootfile" => {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == "rootfile" => {
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"full-path" {
-                        return Ok(String::from_utf8_lossy(&attr.value).to_string());
+                    if attr.key.as_ref() == "full-path" {
+                        return Ok(attr.value.to_string());
                     }
                 }
             }
@@ -156,8 +156,8 @@ fn parse_opf(content: &str) -> Result<(EpubMetadata, Vec<String>)> {
                         let mut href = String::new();
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"id" => id = String::from_utf8_lossy(&attr.value).to_string(),
-                                b"href" => href = String::from_utf8_lossy(&attr.value).to_string(),
+                                "id" => id = attr.value.to_string(),
+                                "href" => href = attr.value.to_string(),
                                 _ => {}
                             }
                         }
@@ -176,8 +176,8 @@ fn parse_opf(content: &str) -> Result<(EpubMetadata, Vec<String>)> {
                         let mut href = String::new();
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"id" => id = String::from_utf8_lossy(&attr.value).to_string(),
-                                b"href" => href = String::from_utf8_lossy(&attr.value).to_string(),
+                                "id" => id = attr.value.to_string(),
+                                "href" => href = attr.value.to_string(),
                                 _ => {}
                             }
                         }
@@ -187,8 +187,8 @@ fn parse_opf(content: &str) -> Result<(EpubMetadata, Vec<String>)> {
                     }
                     "itemref" => {
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"idref" {
-                                spine_ids.push(String::from_utf8_lossy(&attr.value).to_string());
+                            if attr.key.as_ref() == "idref" {
+                                spine_ids.push(attr.value.to_string());
                             }
                         }
                     }
@@ -196,7 +196,7 @@ fn parse_opf(content: &str) -> Result<(EpubMetadata, Vec<String>)> {
                 }
             }
             Ok(Event::Text(e)) if !current_tag.is_empty() => {
-                let text = e.decode().unwrap_or_default().to_string();
+                let text = e.to_string();
                 match current_tag.as_str() {
                     "title" => metadata.title = Some(text),
                     "creator" => metadata.author = Some(text),
@@ -266,12 +266,11 @@ fn html_to_markdown(html: &str) -> String {
     .unwrap_or_default()
 }
 
-fn local_name(name: &[u8]) -> String {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    if let Some(pos) = s.rfind(':') {
-        s[pos + 1..].to_string()
+fn local_name(name: &str) -> String {
+    if let Some(pos) = name.rfind(':') {
+        name[pos + 1..].to_string()
     } else {
-        s.to_string()
+        name.to_string()
     }
 }
 

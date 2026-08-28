@@ -16,13 +16,14 @@ name = "mq-conv"
 path = "src/main.rs"
 
 [lib]
+crate-type = ["cdylib", "rlib"]
 name = "mq_conv"
 path = "src/lib.rs"
 
 [features]
 asciidoc = []
 audio = ["dep:lofty"]
-csv = ["dep:csv"]
+csv = ["dep:csv", "dep:encoding_rs", "dep:chardetng"]
 default = [
   "excel",
   "pdf",
@@ -57,7 +58,7 @@ default = [
 ]
 epub = ["dep:zip", "dep:quick-xml", "dep:mq-markdown"]
 excel = ["dep:calamine"]
-html = ["dep:mq-markdown"]
+html = ["dep:mq-markdown", "dep:encoding_rs", "dep:chardetng"]
 image = ["dep:image", "dep:kamadak-exif"]
 json = ["dep:serde_json"]
 markdown_asciidoc = ["dep:mq-markdown"]
@@ -84,14 +85,76 @@ xml = ["dep:quick-xml"]
 yaml = ["dep:serde_yaml"]
 zip = ["dep:zip"]
 
+wasm = [
+  "excel",
+  "pdf",
+  "powerpoint",
+  "word",
+  "image",
+  "zip",
+  "epub",
+  "audio",
+  "csv",
+  "html",
+  "json",
+  "yaml",
+  "toml_conv",
+  "xml",
+  "tar",
+  "video",
+  "markdown_docx",
+  "markdown_html",
+  "markdown_text",
+  "markdown_latex",
+  "markdown_rst",
+  "markdown_asciidoc",
+  "markdown_org",
+  "markdown_epub_out",
+  "markdown_json_ast",
+  "rst",
+  "org",
+  "mediawiki",
+  "asciidoc",
+]
+
+wasm_slim = [
+  "excel",
+  "pdf",
+  "powerpoint",
+  "word",
+  "zip",
+  "epub",
+  "csv",
+  "html",
+  "json",
+  "yaml",
+  "toml_conv",
+  "xml",
+  "markdown_docx",
+  "markdown_html",
+  "markdown_text",
+  "markdown_latex",
+  "markdown_rst",
+  "markdown_asciidoc",
+  "markdown_org",
+  "markdown_epub_out",
+  "markdown_json_ast",
+  "rst",
+  "org",
+  "mediawiki",
+  "asciidoc",
+]
+
 [dependencies]
 clap = {version = "4.6", features = ["derive"]}
 miette = {version = "7", features = ["fancy"]}
 thiserror = "2"
 
 calamine = {version = "0.36", optional = true}
+chardetng = {version = "0.1", optional = true}
 csv = {version = "1", optional = true}
 docx-rs = {version = "0.4", optional = true}
+encoding_rs = {version = "0.8", optional = true}
 epub-builder = {version = "0.8", optional = true}
 flate2 = {version = "1", optional = true}
 image = {version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"]}
@@ -108,6 +171,10 @@ toml = {version = "1.1", optional = true}
 unpdf = {version = "0.14", optional = true}
 zip = {version = "8.6", optional = true, default-features = false, features = ["deflate"]}
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = {version = "1", features = ["js"]}
+wasm-bindgen = "0.2"
+
 [dev-dependencies]
 pretty_assertions = "1"
 rstest = "0.26"
@@ -118,3 +185,6 @@ lto = "fat"
 opt-level = "z"
 panic = "abort"
 strip = true
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O4', '--enable-bulk-memory', '--enable-nontrapping-float-to-int']

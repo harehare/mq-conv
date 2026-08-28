@@ -129,7 +129,7 @@ fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
     write!(writer, "|")?;
     for i in 0..col_count {
         let cell = header.get(i).map(|s| s.as_str()).unwrap_or("");
-        write!(writer, " {cell} |")?;
+        write!(writer, " {} |", table_cell(cell))?;
     }
     writeln!(writer)?;
 
@@ -145,7 +145,7 @@ fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
         write!(writer, "|")?;
         for i in 0..col_count {
             let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            write!(writer, " {cell} |")?;
+            write!(writer, " {} |", table_cell(cell))?;
         }
         writeln!(writer)?;
     }
@@ -185,7 +185,16 @@ fn format_cell(data: &Data) -> String {
             }
         }
         Data::Bool(b) => b.to_string(),
-        Data::DateTime(dt) => escape_pipe(&dt.to_string()),
+        Data::DateTime(dt) => {
+            let (y, mo, d, h, m, s, _) = dt.to_ymd_hms_milli();
+            if dt.is_duration() {
+                format!("{h:02}:{m:02}:{s:02}")
+            } else if h == 0 && m == 0 && s == 0 {
+                format!("{y:04}-{mo:02}-{d:02}")
+            } else {
+                format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02}")
+            }
+        }
         Data::DateTimeIso(s) => escape_pipe(s),
         Data::DurationIso(s) => escape_pipe(s),
         Data::Error(e) => format!("#{e:?}"),
@@ -194,6 +203,10 @@ fn format_cell(data: &Data) -> String {
 
 fn escape_pipe(s: &str) -> String {
     s.replace('|', "\\|")
+}
+
+fn table_cell(s: &str) -> String {
+    s.replace("\r\n", "<br>").replace('\n', "<br>")
 }
 
 #[cfg(test)]
@@ -379,6 +392,86 @@ mod tests {
             zip.finish().unwrap().into_inner()
         }
 
+        fn make_xlsx_with_date_cell(serial: &str) -> Vec<u8> {
+            let content_types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>"#;
+
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#;
+
+            let workbook = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Dates" sheetId="1" r:id="rId1"/></sheets>
+</workbook>"#
+                .to_string();
+
+            let workbook_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>"#;
+
+            let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts>
+  <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+  </cellXfs>
+</styleSheet>"#;
+
+            let worksheet = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData><row r="1"><c r="A1" s="1"><v>{serial}</v></c></row></sheetData>
+</worksheet>"#
+            );
+
+            let buf = Vec::new();
+            let cursor = std::io::Cursor::new(buf);
+            let mut zip = zip::ZipWriter::new(cursor);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+
+            for (name, content) in [
+                ("[Content_Types].xml", content_types.to_string()),
+                ("_rels/.rels", rels.to_string()),
+                ("xl/workbook.xml", workbook),
+                ("xl/_rels/workbook.xml.rels", workbook_rels.to_string()),
+                ("xl/styles.xml", styles.to_string()),
+                ("xl/worksheets/sheet1.xml", worksheet),
+            ] {
+                zip.start_file(name, opts).unwrap();
+                zip.write_all(content.as_bytes()).unwrap();
+            }
+
+            zip.finish().unwrap().into_inner()
+        }
+
+        #[test]
+        fn test_date_cell_renders_as_iso_date_not_serial_number() {
+            let xlsx = make_xlsx_with_date_cell("44927");
+            let out = convert(&xlsx);
+            assert!(out.contains("2023-01-01"), "expected ISO date in:\n{out}");
+            assert!(
+                !out.contains("44927"),
+                "raw Excel serial leaked through:\n{out}"
+            );
+        }
+
         fn convert(data: &[u8]) -> String {
             let mut out = Vec::new();
             ExcelConverter.convert(data, &mut out).unwrap();
@@ -457,6 +550,13 @@ mod tests {
             let xlsx = make_xlsx("S", &[&["a|b", "c"], &["x|y", "z"]]);
             let out = convert(&xlsx);
             assert!(out.contains("a\\|b"), "pipe not escaped");
+        }
+
+        #[test]
+        fn test_multiline_cell_kept_on_one_table_row() {
+            let xlsx = make_xlsx("S", &[&["Name", "Note"], &["Alice", "Line one\nLine two"]]);
+            let out = convert(&xlsx);
+            assert!(out.contains("| Alice | Line one<br>Line two |"), "{out}");
         }
 
         #[test]

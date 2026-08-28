@@ -7,6 +7,8 @@ pub mod asciidoc;
 pub mod audio;
 #[cfg(feature = "csv")]
 pub mod csv;
+#[cfg(any(feature = "csv", feature = "html"))]
+pub mod encoding;
 #[cfg(feature = "epub")]
 pub mod epub;
 #[cfg(feature = "excel")]

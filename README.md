@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/logo.svg" width="80" height="80" alt="mq-conv logo" /><br/>
+</div>
+
 <h1 align="center">mq-conv</h1>
 
 <p align="center"><b>Turn PDFs, Office docs, and 20+ other formats into clean, structure-preserving Markdown.</b></p>
@@ -10,28 +14,29 @@
 
 </div>
 
-`mq-conv` is a command-line tool, written in Rust, that converts PDFs, Office documents, markup languages, spreadsheets, data formats, media, and archives into Markdown — locally, with no API keys, no network calls, and no Python runtime. It ships as a single static binary and is designed to be the first stage of a Unix-style pipeline with [mq](https://github.com/harehare/mq), the jq-for-Markdown query engine.
+`mq-conv` converts PDFs, Office docs, markup, spreadsheets, data formats, media, and archives into Markdown — locally, no API keys, no network calls, no Python runtime. Single static binary, built to feed [mq](https://github.com/harehare/mq), the jq-for-Markdown query engine.
 
 ## Why mq-conv?
 
-Most "convert X to Markdown" tools either dump raw text (losing headings, tables, and links) or require a cloud API call to an LLM-powered parser. mq-conv takes a middle path: **layout-aware, offline parsing** that reconstructs document structure directly from the file format, so the Markdown it produces is something you can actually query, diff, and feed to an LLM.
+Most "convert to Markdown" tools either dump raw text or call out to a cloud LLM parser. mq-conv takes a middle path: **layout-aware, offline parsing** that reconstructs structure from the file format itself, so the output is Markdown you can actually query, diff, and feed to an LLM.
 
-- **Local & offline** — no API keys, no network access, no rate limits. Your files never leave your machine.
-- **Single static binary** — install once, use anywhere. No Python/Node runtime or dependency hell.
-- **Structure-aware, not text-dump** — headings, tables, lists, and hyperlinks are reconstructed from layout and document XML, not just concatenated text.
-- **20+ formats** — documents, markup languages, spreadsheets, data formats, media, and archives, all through one CLI.
-- **Composable** — output is plain Markdown on stdout, ready to pipe into [mq](https://github.com/harehare/mq) or any other Unix tool.
+- **Local & offline** — no API keys, no network, no rate limits
+- **Single static binary** — no Python/Node runtime, no dependency hell
+- **Structure-aware** — headings, tables, lists, links reconstructed from layout, not a text dump
+- **20+ formats** — documents, markup, spreadsheets, data, media, archives, one CLI
+- **Composable** — plain Markdown on stdout, ready to pipe into [mq](https://github.com/harehare/mq)
 
 ### Key Features
 
-- **Layout-Aware PDF Parsing** - Reconstructs headings (by relative font size), paragraphs, lists, and tables from glyph positions, and strips repeated running headers/footers and page numbers
-- **Hyperlink Preservation** - Word documents keep their links as `[text](url)` Markdown instead of dropping them
-- **Automatic Format Detection** - Detects file formats by extension and magic bytes
-- **20+ Supported Formats** - Documents, markup, data, media, and archives
-- **Image OCR** - Extract text from images using Tesseract OCR
-- **Markdown to Word** - Convert Markdown documents to `.docx` format
-- **Stdin Support** - Pipe data directly from other commands
-- **Modular Architecture** - Enable only the formats you need via feature flags
+- **Layout-Aware PDF Parsing** — headings, paragraphs, lists, tables from glyph positions; strips repeated headers/footers/page numbers
+- **Hyperlink Preservation** — Word links survive as `[text](url)`
+- **Automatic Format Detection** — by extension and magic bytes
+- **20+ Supported Formats** — documents, markup, data, media, archives
+- **Image OCR** — via Tesseract
+- **Markdown to Word** — convert `.md` to `.docx`
+- **Stdin Support** — pipe data from other commands
+- **Modular Architecture** — enable only the formats you need via feature flags
+- **WebAssembly** — core formats also build for the browser, see [WebAssembly](#webassembly)
 
 ## Installation
 
@@ -113,67 +118,67 @@ mq conv slides.pptx | mq view
 
 ### Documents
 
-| Format          | Extensions          | Notes                                              |
-| ---------------- | -------------------- | --------------------------------------------------- |
-| PDF               | `.pdf`               | Layout-aware: headings, paragraphs, lists, tables    |
-| Word              | `.docx`              | Headings, styles, lists, tables                      |
-| PowerPoint        | `.pptx`              | Slides, titles, bullets, tables, speaker notes        |
-| EPUB              | `.epub`               | Chapter structure preserved                          |
-| HTML              | `.html`               | Via [mq-markdown](https://github.com/harehare/mq)     |
-| Markdown → Word   | `.md`, `.markdown`    | Reverse conversion, see `--to`                        |
+| Format | Extensions | Notes |
+| --- | --- | --- |
+| PDF | `.pdf` | Layout-aware: headings, paragraphs, lists, tables |
+| Word | `.docx` | Headings, styles, lists, tables |
+| PowerPoint | `.pptx` | Slides, titles, bullets, tables, speaker notes |
+| EPUB | `.epub` | Chapter structure preserved |
+| HTML | `.html` | Via [mq-markdown](https://github.com/harehare/mq) |
+| Markdown → Word | `.md`, `.markdown` | Reverse conversion, see `--to` |
 
 ### Markup Languages
 
-| Format            | Extensions            |
-| ------------------ | ---------------------- |
-| reStructuredText   | `.rst`                 |
-| Org-mode           | `.org`                 |
-| MediaWiki          | `.wiki`, `.mediawiki`  |
-| AsciiDoc           | `.adoc`, `.asciidoc`   |
+| Format | Extensions |
+| --- | --- |
+| reStructuredText | `.rst` |
+| Org-mode | `.org` |
+| MediaWiki | `.wiki`, `.mediawiki` |
+| AsciiDoc | `.adoc`, `.asciidoc` |
 
 ### Spreadsheets
 
-| Format | Extensions                       |
-| ------ | --------------------------------- |
-| Excel  | `.xlsx`, `.xls`, `.xlsb`, `.ods`  |
-| CSV    | `.csv`, `.tsv`                    |
+| Format | Extensions |
+| --- | --- |
+| Excel | `.xlsx`, `.xls`, `.xlsb`, `.ods` |
+| CSV | `.csv`, `.tsv` |
 
 ### Data Formats
 
-| Format | Extensions                    |
-| ------ | ------------------------------ |
-| JSON   | `.json`                        |
-| YAML   | `.yaml`, `.yml`                |
-| TOML   | `.toml`                        |
-| XML    | `.xml`                         |
-| SQLite | `.sqlite`, `.sqlite3`, `.db`   |
+| Format | Extensions |
+| --- | --- |
+| JSON | `.json` |
+| YAML | `.yaml`, `.yml` |
+| TOML | `.toml` |
+| XML | `.xml` |
+| SQLite | `.sqlite`, `.sqlite3`, `.db` |
 
 ### Media
 
-| Format | Extensions                                                          |
-| ------ | --------------------------------------------------------------------- |
-| Image  | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`, `.tiff`      |
-| OCR    | any image (use `--format ocr`)                                        |
-| Audio  | `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.wma`                |
-| Video  | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.m4v`, `.wmv`, `.flv`        |
+| Format | Extensions |
+| --- | --- |
+| Image | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`, `.tiff` |
+| OCR | any image (use `--format ocr`) |
+| Audio | `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.wma` |
+| Video | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.m4v`, `.wmv`, `.flv` |
 
 ### Archives
 
-| Format | Extensions      |
-| ------ | ---------------- |
-| ZIP    | `.zip`            |
-| TAR    | `.tar`, `.tgz`    |
+| Format | Extensions |
+| --- | --- |
+| ZIP | `.zip` |
+| TAR | `.tar`, `.tgz` |
 
 ## How Conversion Works
 
-mq-conv doesn't just extract raw text — each converter reconstructs Markdown structure from the source format's own layout signals:
+Each converter reconstructs Markdown structure from the source format's own layout signals, not just raw text:
 
-- **PDF**: glyphs are collected with their position and font size, grouped into words and lines, then reassembled into paragraphs, bulleted/numbered lists, and tables by clustering x-positions into column boundaries. Headings are detected from font size relative to the document's body text, hyphenated line breaks are rejoined, and lines that repeat in the same margin position across most pages (running headers, footers, page numbers) are stripped out.
-- **Word / PowerPoint**: parsed directly from the underlying OOXML (`document.xml` / `slideN.xml`), preserving heading styles, bold/italic runs, hyperlinks, list nesting, and table structure — no shelling out to Office or LibreOffice.
-- **Excel**: each sheet is segmented into blocks by blank rows, and each block is classified as a table or free text before rendering, so title cells and footnotes don't get mangled into table columns.
-- **HTML**: delegated to [mq-markdown](https://github.com/harehare/mq)'s HTML-to-Markdown engine, which handles semantic tags, code blocks, and front matter.
+- **PDF** — glyphs are grouped by position/font into words, lines, paragraphs, lists, and tables (via x-position clustering). Headings come from relative font size; repeated headers/footers/page numbers are stripped.
+- **Word / PowerPoint** — parsed directly from OOXML (`document.xml` / `slideN.xml`): headings, bold/italic, hyperlinks, list nesting, tables. No Office/LibreOffice shell-out.
+- **Excel** — each sheet is split into blocks by blank rows, then each block is classified as table or free text.
+- **HTML** — delegated to [mq-markdown](https://github.com/harehare/mq)'s HTML-to-Markdown engine.
 
-This is the same philosophy as document-parsing tools like Pandoc or Firecrawl's document ingestion, but implemented as dependency-free Rust so it runs anywhere, instantly, with no external service.
+Same philosophy as Pandoc or Firecrawl's ingestion, but dependency-free Rust — runs anywhere, instantly, no external service.
 
 ## Command-Line Options
 
@@ -187,6 +192,7 @@ Options:
   -f, --format <FORMAT>          Force a specific format instead of auto-detecting
   -o, --output-dir <OUTPUT_DIR>  Output directory for individual output files (one per input file)
       --to <TO>                  Target output format when converting from Markdown
+      --ocr-lang <OCR_LANG>      Tesseract language for OCR, e.g. "jpn" or "eng+jpn" [default: eng]
   -h, --help                     Print help
   -V, --version                  Print version
 ```
@@ -210,6 +216,20 @@ sudo apt install tesseract-ocr
 sudo pacman -S tesseract
 ```
 
+OCR defaults to English. For other languages, install the matching Tesseract language pack and pass `--ocr-lang`:
+
+```bash
+# macOS: installs all language packs
+brew install tesseract-lang
+
+# Ubuntu/Debian: install just what you need
+sudo apt install tesseract-ocr-jpn tesseract-ocr-chi-sim tesseract-ocr-kor
+
+# OCR a Japanese image (language codes can be combined with "+")
+mq-conv photo.png --format ocr --ocr-lang jpn
+mq-conv mixed.png --format ocr --ocr-lang eng+jpn
+```
+
 Usage:
 
 ```bash
@@ -219,6 +239,33 @@ mq-conv photo.png --format ocr
 # Convert Markdown to Word docx
 mq-conv document.md
 mq-conv document.md --output-dir ./out  # creates document.docx
+```
+
+## WebAssembly
+
+The `wasm` feature builds `mq-conv` as a `cdylib` for `wasm32-unknown-unknown`, for use in the browser via [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen). It bundles every format except `sqlite` and `ocr`, which depend on native C libraries.
+
+```bash
+wasm-pack build --target web --no-default-features --features wasm --release
+```
+
+| Feature | Formats | Size (gzip) |
+| --- | --- | --- |
+| `wasm` | everything but `sqlite`/`ocr` | ~2.7 MB |
+| `wasm_slim` | drops `image`, `audio`, `video`, `tar` — documents/markup/data only | ~2.3 MB |
+
+Use `wasm_slim` for document-conversion-only use cases:
+
+```bash
+wasm-pack build --target web --no-default-features --features wasm_slim --release
+```
+
+```js
+import init, { convert, detectFormat } from "./pkg/mq_conv.js";
+
+await init();
+const bytes = new Uint8Array(await file.arrayBuffer());
+const markdown = convert(bytes, file.name, undefined); // filename, or pass a format name directly
 ```
 
 ## Related Projects

@@ -136,27 +136,56 @@ fn flush_table(doc: Docx, table_data: &mut Vec<(usize, usize, String)>) -> Docx 
     doc.add_table(table)
 }
 
+const MAX_LIST_LEVEL: usize = 8;
+const BULLET_CHARS: [&str; 3] = ["•", "◦", "▪"];
+
+fn bullet_level(level: usize) -> Level {
+    let indent = 720 * (level as i32 + 1);
+    Level::new(
+        level,
+        Start::new(1),
+        NumberFormat::new("bullet"),
+        LevelText::new(BULLET_CHARS[level % BULLET_CHARS.len()]),
+        LevelJc::new("left"),
+    )
+    .indent(
+        Some(indent),
+        Some(docx_rs::SpecialIndentType::Hanging(360)),
+        None,
+        None,
+    )
+}
+
+fn decimal_level(level: usize) -> Level {
+    let indent = 720 * (level as i32 + 1);
+    Level::new(
+        level,
+        Start::new(1),
+        NumberFormat::new("decimal"),
+        LevelText::new(format!("%{}.", level + 1)),
+        LevelJc::new("left"),
+    )
+    .indent(
+        Some(indent),
+        Some(docx_rs::SpecialIndentType::Hanging(360)),
+        None,
+        None,
+    )
+}
+
 fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::Error>> {
     let mut doc = Docx::new();
 
-    // Add a list numbering definition for unordered lists
-    let abstract_numbering = AbstractNumbering::new(0).add_level(
-        Level::new(
-            0,
-            Start::new(1),
-            NumberFormat::new("bullet"),
-            LevelText::new("•"),
-            LevelJc::new("left"),
-        )
-        .indent(
-            Some(720),
-            Some(docx_rs::SpecialIndentType::Hanging(360)),
-            None,
-            None,
-        ),
-    );
-    doc = doc.add_abstract_numbering(abstract_numbering);
+    let mut bullet_numbering = AbstractNumbering::new(0);
+    let mut decimal_numbering = AbstractNumbering::new(1);
+    for level in 0..=MAX_LIST_LEVEL {
+        bullet_numbering = bullet_numbering.add_level(bullet_level(level));
+        decimal_numbering = decimal_numbering.add_level(decimal_level(level));
+    }
+    doc = doc.add_abstract_numbering(bullet_numbering);
+    doc = doc.add_abstract_numbering(decimal_numbering);
     doc = doc.add_numbering(Numbering::new(1, 0));
+    doc = doc.add_numbering(Numbering::new(2, 1));
 
     let parsed = markdown.parse::<Markdown>()?;
 
@@ -164,8 +193,6 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
     let mut prev_end_line: Option<usize> = None;
     let mut table_data: Vec<(usize, usize, String)> = Vec::new();
     let mut in_table = false;
-    let mut ordered_item_count: u64 = 0;
-    let mut in_ordered_list = false;
 
     for node in &parsed.nodes {
         match node {
@@ -173,8 +200,6 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
                 doc = flush_inline_runs(doc, &mut inline_runs);
                 prev_end_line = None;
                 in_table = true;
-                in_ordered_list = false;
-                ordered_item_count = 0;
                 let text = extract_text(&cell.values);
                 table_data.push((cell.row, cell.column, text));
                 continue;
@@ -193,8 +218,6 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
         match node {
             Node::Heading(h) => {
                 doc = flush_inline_runs(doc, &mut inline_runs);
-                in_ordered_list = false;
-                ordered_item_count = 0;
                 let text = extract_text(&h.values);
                 let para = Paragraph::new()
                     .style(heading_style(h.depth))
@@ -205,8 +228,6 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
 
             Node::Code(c) => {
                 doc = flush_inline_runs(doc, &mut inline_runs);
-                in_ordered_list = false;
-                ordered_item_count = 0;
                 for line in c.value.lines() {
                     let para = Paragraph::new().add_run(
                         Run::new()
@@ -220,32 +241,21 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
 
             Node::List(l) => {
                 doc = flush_inline_runs(doc, &mut inline_runs);
-                let text = extract_text(&l.values);
-                if l.ordered {
-                    if !in_ordered_list {
-                        ordered_item_count = 1;
-                        in_ordered_list = true;
-                    } else {
-                        ordered_item_count += 1;
-                    }
-                    let formatted = format!("{ordered_item_count}. {text}");
-                    let para = Paragraph::new().add_run(Run::new().add_text(&formatted));
-                    doc = doc.add_paragraph(para);
-                } else {
-                    in_ordered_list = false;
-                    ordered_item_count = 0;
-                    let para = Paragraph::new()
-                        .numbering(NumberingId::new(1), IndentLevel::new(0))
-                        .add_run(Run::new().add_text(&text));
-                    doc = doc.add_paragraph(para);
+                let mut text = extract_text(&l.values);
+                if let Some(checked) = l.checked {
+                    text = format!("{} {text}", if checked { "☑" } else { "☐" });
                 }
+                let level = (l.level as usize).min(MAX_LIST_LEVEL);
+                let numbering_id = if l.ordered { 2 } else { 1 };
+                let para = Paragraph::new()
+                    .numbering(NumberingId::new(numbering_id), IndentLevel::new(level))
+                    .add_run(Run::new().add_text(&text));
+                doc = doc.add_paragraph(para);
                 prev_end_line = l.position.as_ref().map(|p| p.end.line);
             }
 
             Node::Blockquote(bq) => {
                 doc = flush_inline_runs(doc, &mut inline_runs);
-                in_ordered_list = false;
-                ordered_item_count = 0;
                 let text = extract_text(&bq.values);
                 let para = Paragraph::new()
                     .style("Quote")
@@ -256,8 +266,6 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
 
             Node::HorizontalRule(_) => {
                 doc = flush_inline_runs(doc, &mut inline_runs);
-                in_ordered_list = false;
-                ordered_item_count = 0;
                 let para = Paragraph::new().add_run(Run::new().add_text("─".repeat(40)));
                 doc = doc.add_paragraph(para);
                 prev_end_line = None;
@@ -271,8 +279,6 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
             | Node::Break(_)
             | Node::Link(_)
             | Node::Delete(_) => {
-                in_ordered_list = false;
-                ordered_item_count = 0;
                 if let Some(pos) = node.position()
                     && let Some(end) = prev_end_line
                 {
@@ -304,4 +310,54 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
     doc = flush_inline_runs(doc, &mut inline_runs);
 
     Ok(doc)
+}
+
+#[cfg(all(test, feature = "zip"))]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    fn document_xml(markdown: &str) -> String {
+        let mut out = Vec::new();
+        MarkdownDocxConverter
+            .convert(markdown.as_bytes(), &mut out)
+            .unwrap();
+        let cursor = Cursor::new(out);
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        xml
+    }
+
+    #[test]
+    fn test_nested_bullet_list_uses_distinct_indent_levels() {
+        let xml = document_xml("- Top\n  - Sub\n");
+        assert!(xml.contains(r#"<w:ilvl w:val="0""#), "{xml}");
+        assert!(xml.contains(r#"<w:ilvl w:val="1""#), "{xml}");
+    }
+
+    #[test]
+    fn test_ordered_list_uses_decimal_numbering() {
+        let xml = document_xml("1. First\n2. Second\n");
+        assert!(xml.contains(r#"<w:numId w:val="2""#), "{xml}");
+        assert!(xml.contains("First"));
+        assert!(xml.contains("Second"));
+    }
+
+    #[test]
+    fn test_bullet_list_uses_bullet_numbering() {
+        let xml = document_xml("- Item\n");
+        assert!(xml.contains(r#"<w:numId w:val="1""#), "{xml}");
+    }
+
+    #[test]
+    fn test_task_list_shows_checked_state() {
+        let xml = document_xml("- [x] Done\n- [ ] Todo\n");
+        assert!(xml.contains("☑ Done"), "{xml}");
+        assert!(xml.contains("☐ Todo"), "{xml}");
+    }
 }

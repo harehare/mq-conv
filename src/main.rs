@@ -25,6 +25,11 @@ struct Args {
     /// Target output format when converting from Markdown
     #[arg(long)]
     to: Option<ToArg>,
+
+    /// Tesseract language for OCR, e.g. "jpn" or "eng+jpn" (requires the
+    /// matching tesseract-ocr language pack to be installed)
+    #[arg(long, default_value = "eng")]
+    ocr_lang: String,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -128,11 +133,24 @@ fn resolve_output_format(detected: Format, forced_to: Option<&ToArg>) -> miette:
     }
 }
 
+#[cfg_attr(not(feature = "ocr"), allow(unused_variables))]
+fn resolve_converter(
+    format: Format,
+    ocr_lang: &str,
+) -> mq_conv::error::Result<Box<dyn mq_conv::converter::Converter>> {
+    match format {
+        #[cfg(feature = "ocr")]
+        Format::Ocr => Ok(mq_conv::formats::get_ocr_converter(ocr_lang)),
+        _ => mq_conv::formats::get_converter(format),
+    }
+}
+
 fn convert_one(
     input: &[u8],
     filename: Option<&str>,
     forced_format: Option<&FormatArg>,
     forced_to: Option<&ToArg>,
+    ocr_lang: &str,
     writer: &mut dyn Write,
 ) -> miette::Result<()> {
     let detected = if let Some(f) = forced_format {
@@ -144,7 +162,7 @@ fn convert_one(
     };
     let format = resolve_output_format(detected, forced_to)?;
 
-    let converter = mq_conv::formats::get_converter(format).map_err(|e| miette::miette!("{e}"))?;
+    let converter = resolve_converter(format, ocr_lang).map_err(|e| miette::miette!("{e}"))?;
     converter
         .convert(input, writer)
         .map_err(|e| miette::miette!("{e}"))?;
@@ -166,7 +184,14 @@ fn main() -> miette::Result<()> {
 
         let stdout = io::stdout();
         let mut writer = BufWriter::new(stdout.lock());
-        convert_one(&buf, None, args.format.as_ref(), args.to.as_ref(), &mut writer)?;
+        convert_one(
+            &buf,
+            None,
+            args.format.as_ref(),
+            args.to.as_ref(),
+            &args.ocr_lang,
+            &mut writer,
+        )?;
         writer.flush().into_diagnostic()?;
     } else if let Some(ref output_dir) = args.output_dir {
         // Output each file as individual output file
@@ -191,7 +216,7 @@ fn main() -> miette::Result<()> {
             let format = resolve_output_format(detected, args.to.as_ref())?;
 
             let converter =
-                mq_conv::formats::get_converter(format).map_err(|e| miette::miette!("{e}"))?;
+                resolve_converter(format, &args.ocr_lang).map_err(|e| miette::miette!("{e}"))?;
             let ext = converter.output_extension();
             let out_path = output_dir.join(format!("{stem}.{ext}"));
 
@@ -218,6 +243,7 @@ fn main() -> miette::Result<()> {
                 filename.as_deref(),
                 args.format.as_ref(),
                 args.to.as_ref(),
+                &args.ocr_lang,
                 &mut writer,
             )?;
         }

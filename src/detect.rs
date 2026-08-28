@@ -214,6 +214,45 @@ impl Format {
     }
 }
 
+impl Format {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "excel" => Some(Self::Excel),
+            "pdf" => Some(Self::Pdf),
+            "powerpoint" => Some(Self::PowerPoint),
+            "word" => Some(Self::Word),
+            "image" => Some(Self::Image),
+            "zip" => Some(Self::Zip),
+            "epub" => Some(Self::Epub),
+            "audio" => Some(Self::Audio),
+            "csv" => Some(Self::Csv),
+            "html" => Some(Self::Html),
+            "json" => Some(Self::Json),
+            "yaml" => Some(Self::Yaml),
+            "toml" => Some(Self::Toml),
+            "xml" => Some(Self::Xml),
+            "sqlite" => Some(Self::Sqlite),
+            "tar" => Some(Self::Tar),
+            "video" => Some(Self::Video),
+            "ocr" => Some(Self::Ocr),
+            "markdown-docx" => Some(Self::MarkdownDocx),
+            "markdown-html" => Some(Self::MarkdownHtml),
+            "markdown-text" => Some(Self::MarkdownText),
+            "markdown-latex" => Some(Self::MarkdownLatex),
+            "markdown-rst" => Some(Self::MarkdownRst),
+            "markdown-asciidoc" => Some(Self::MarkdownAsciidoc),
+            "markdown-org" => Some(Self::MarkdownOrg),
+            "markdown-epub" => Some(Self::MarkdownEpub),
+            "markdown-json-ast" => Some(Self::MarkdownJsonAst),
+            "rst" => Some(Self::Rst),
+            "org" => Some(Self::Org),
+            "mediawiki" => Some(Self::MediaWiki),
+            "asciidoc" => Some(Self::Asciidoc),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for Format {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -7,6 +7,8 @@ pub mod asciidoc;
 pub mod audio;
 #[cfg(feature = "csv")]
 pub mod csv;
+#[cfg(any(feature = "csv", feature = "html"))]
+pub mod encoding;
 #[cfg(feature = "epub")]
 pub mod epub;
 #[cfg(feature = "excel")]
@@ -155,7 +157,7 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::Video => Err(crate::error::Error::FeatureDisabled("video".into())),
 
         #[cfg(feature = "ocr")]
-        Format::Ocr => Ok(Box::new(ocr::OcrConverter)),
+        Format::Ocr => Ok(Box::new(ocr::OcrConverter::default())),
         #[cfg(not(feature = "ocr"))]
         Format::Ocr => Err(crate::error::Error::FeatureDisabled("ocr".into())),
 
@@ -224,4 +226,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(not(feature = "asciidoc"))]
         Format::Asciidoc => Err(crate::error::Error::FeatureDisabled("asciidoc".into())),
     }
+}
+
+#[cfg(feature = "ocr")]
+pub fn get_ocr_converter(lang: impl Into<String>) -> Box<dyn Converter> {
+    Box::new(ocr::OcrConverter { lang: lang.into() })
 }

@@ -258,8 +258,8 @@ fn html_to_markdown(html: &str) -> String {
         html,
         mq_markdown::ConversionOptions {
             extract_scripts_as_code_blocks: true,
-            generate_front_matter: true,
-            use_title_as_h1: true,
+            generate_front_matter: false,
+            use_title_as_h1: false,
             base_url: None,
         },
     )
@@ -272,5 +272,83 @@ fn local_name(name: &[u8]) -> String {
         s[pos + 1..].to_string()
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_epub(chapter_title: &str, chapter_body: &str) -> Vec<u8> {
+        let container = r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#;
+
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>My Book</dc:title>
+    <dc:creator>Jane Doe</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>"#;
+
+        let chapter = format!(
+            r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>{chapter_title}</title></head>
+<body>{chapter_body}</body>
+</html>"#
+        );
+
+        let buf = Vec::new();
+        let cursor = Cursor::new(buf);
+        let mut zip = zip::ZipWriter::new(cursor);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        for (name, content) in [
+            ("META-INF/container.xml", container.to_string()),
+            ("OEBPS/content.opf", opf.to_string()),
+            ("OEBPS/chapter1.xhtml", chapter),
+        ] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn convert(epub_bytes: &[u8]) -> String {
+        let mut out = Vec::new();
+        EpubConverter.convert(epub_bytes, &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn test_chapter_title_not_duplicated_with_body_heading() {
+        let epub = make_epub("Chapter 1", "<h1>Chapter 1</h1><p>Once upon a time.</p>");
+        let out = convert(&epub);
+        assert_eq!(
+            out.matches("Chapter 1").count(),
+            1,
+            "chapter <title> and body <h1> should not both render:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_book_metadata_rendered_once() {
+        let epub = make_epub("Intro", "<p>Hello.</p>");
+        let out = convert(&epub);
+        assert!(out.starts_with("# My Book"));
+        assert!(out.contains("**Author**: Jane Doe"));
     }
 }

@@ -153,7 +153,10 @@ fn convert_db(path: &std::path::Path, writer: &mut dyn Write) -> Result<()> {
                             rusqlite::types::Value::Null => "NULL".to_string(),
                             rusqlite::types::Value::Integer(n) => n.to_string(),
                             rusqlite::types::Value::Real(f) => f.to_string(),
-                            rusqlite::types::Value::Text(s) => s.replace('|', "\\|"),
+                            rusqlite::types::Value::Text(s) => s
+                                .replace('|', "\\|")
+                                .replace("\r\n", "<br>")
+                                .replace('\n', "<br>"),
                             rusqlite::types::Value::Blob(b) => format!("[BLOB {} bytes]", b.len()),
                         })
                         .unwrap_or_default();

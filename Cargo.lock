@@ -316,6 +316,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chardetng"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
+dependencies = [
+ "cfg-if",
+ "encoding_rs",
+ "memchr",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1487,9 +1498,11 @@ name = "mq-conv"
 version = "0.1.8"
 dependencies = [
  "calamine",
+ "chardetng",
  "clap",
  "csv",
  "docx-rs",
+ "encoding_rs",
  "epub-builder",
  "flate2",
  "image",
@@ -1508,6 +1521,8 @@ dependencies = [
  "thiserror 2.0.20",
  "toml",
  "unpdf",
+ "uuid",
+ "wasm-bindgen",
  "zip 8.6.0",
 ]
 

@@ -5,7 +5,17 @@ use leptess::LepTess;
 use crate::converter::Converter;
 use crate::error::{Error, Result};
 
-pub struct OcrConverter;
+pub struct OcrConverter {
+    pub lang: String,
+}
+
+impl Default for OcrConverter {
+    fn default() -> Self {
+        Self {
+            lang: "eng".to_string(),
+        }
+    }
+}
 
 impl Converter for OcrConverter {
     fn format_name(&self) -> &'static str {
@@ -13,9 +23,12 @@ impl Converter for OcrConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
-        let mut lt = LepTess::new(None, "eng").map_err(|e| Error::Conversion {
+        let mut lt = LepTess::new(None, &self.lang).map_err(|e| Error::Conversion {
             format: "ocr",
-            message: format!("Failed to initialize Tesseract (is tesseract installed?): {e}"),
+            message: format!(
+                "Failed to initialize Tesseract for language \"{}\" (is tesseract, and its \"{}\" language pack, installed?): {e}",
+                self.lang, self.lang
+            ),
         })?;
 
         lt.set_image_from_mem(input).map_err(|e| Error::Conversion {

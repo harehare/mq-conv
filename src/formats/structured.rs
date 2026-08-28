@@ -239,6 +239,8 @@ fn write_markdown_table(
 
 fn escape_pipe(s: &str) -> String {
     s.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
 }
 
 // --- Conversions from format-specific value types ---
@@ -447,6 +449,20 @@ mod tests {
         let output = render(value);
         assert!(output.contains("a\\|b"));
         assert!(output.contains("c\\|d"));
+    }
+
+    #[rstest]
+    fn test_multiline_value_kept_on_one_table_row() {
+        let value = Value::Object(vec![(
+            "bio".into(),
+            Value::String("Line one\nLine two".into()),
+        )]);
+        let output = render(value);
+        assert!(
+            output.contains("| bio | Line one<br>Line two |"),
+            "{output}"
+        );
+        assert_eq!(output.lines().filter(|l| l.starts_with('|')).count(), 3);
     }
 
     #[rstest]

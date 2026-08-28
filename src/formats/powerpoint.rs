@@ -87,14 +87,15 @@ impl Converter for PowerPointConverter {
                             continue;
                         }
 
-                        if shape.has_bullets {
-                            writeln!(writer, "- {text}")?;
+                        if para.has_bullet {
+                            let indent = "  ".repeat(para.level as usize);
+                            writeln!(writer, "{indent}- {text}")?;
                         } else {
                             writeln!(writer, "{text}")?;
                             writeln!(writer)?;
                         }
                     }
-                    if shape.has_bullets {
+                    if shape.paragraphs.iter().any(|p| p.has_bullet) {
                         writeln!(writer)?;
                     }
                 }
@@ -140,11 +141,12 @@ struct SlideShape {
     paragraphs: Vec<Paragraph>,
     is_title: bool,
     is_subtitle: bool,
-    has_bullets: bool,
 }
 
 struct Paragraph {
     runs: Vec<TextRun>,
+    level: u32,
+    has_bullet: bool,
 }
 
 struct TextRun {
@@ -161,11 +163,37 @@ fn render_paragraph(para: &Paragraph) -> String {
 }
 
 fn join_paragraphs_inline(paragraphs: &[Paragraph]) -> String {
-    paragraphs
-        .iter()
-        .map(render_paragraph)
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut out = String::new();
+    for para in paragraphs {
+        let text = render_paragraph(para);
+        if text.is_empty() {
+            continue;
+        }
+        if let (Some(prev), Some(next)) = (out.chars().next_back(), text.chars().next())
+            && !is_spaceless_boundary(prev, next)
+        {
+            out.push(' ');
+        }
+        out.push_str(&text);
+    }
+    out
+}
+
+fn is_spaceless_boundary(prev: char, next: char) -> bool {
+    is_spaceless_script(prev) || is_spaceless_script(next)
+}
+
+fn is_spaceless_script(c: char) -> bool {
+    matches!(c as u32,
+        0x3000..=0x303F
+        | 0x3040..=0x309F
+        | 0x30A0..=0x30FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFF00..=0xFFEF
+    )
 }
 
 fn format_run_text(text: &str, bold: bool, italic: bool) -> String {
@@ -201,10 +229,13 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
         bold: false,
         italic: false,
     };
-    let mut current_paragraph = Paragraph { runs: Vec::new() };
+    let mut current_paragraph = Paragraph {
+        runs: Vec::new(),
+        level: 0,
+        has_bullet: false,
+    };
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     let mut shape_type = String::new();
-    let mut has_bullets = false;
 
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut table_row: Vec<String> = Vec::new();
@@ -219,14 +250,25 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                         in_shape = true;
                         paragraphs.clear();
                         shape_type.clear();
-                        has_bullets = false;
                     }
                     "txBody" => in_text_body = true,
                     "p" if in_text_body => {
                         in_paragraph = true;
-                        current_paragraph = Paragraph { runs: Vec::new() };
+                        current_paragraph = Paragraph {
+                            runs: Vec::new(),
+                            level: 0,
+                            has_bullet: false,
+                        };
                     }
-                    "pPr" if in_paragraph => in_ppr = true,
+                    "pPr" if in_paragraph => {
+                        in_ppr = true;
+                        if let Some(attr) =
+                            e.attributes().flatten().find(|a| a.key.as_ref() == b"lvl")
+                        {
+                            current_paragraph.level =
+                                String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
+                        }
+                    }
                     "r" if in_paragraph => {
                         in_run = true;
                         current_run = TextRun {
@@ -282,8 +324,16 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                             shape_type = "body".to_string();
                         }
                     }
+                    "pPr" if in_paragraph => {
+                        if let Some(attr) =
+                            e.attributes().flatten().find(|a| a.key.as_ref() == b"lvl")
+                        {
+                            current_paragraph.level =
+                                String::from_utf8_lossy(&attr.value).parse().unwrap_or(0);
+                        }
+                    }
                     "buChar" | "buAutoNum" | "buFont" if in_ppr => {
-                        has_bullets = true;
+                        current_paragraph.has_bullet = true;
                     }
                     "rPr" if in_run => {
                         // Self-closing rPr
@@ -329,7 +379,6 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                                 paragraphs: std::mem::take(&mut paragraphs),
                                 is_title,
                                 is_subtitle,
-                                has_bullets,
                             });
                         }
                         in_shape = false;
@@ -339,7 +388,11 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                         if in_paragraph && !current_paragraph.runs.is_empty() {
                             paragraphs.push(std::mem::replace(
                                 &mut current_paragraph,
-                                Paragraph { runs: Vec::new() },
+                                Paragraph {
+                                    runs: Vec::new(),
+                                    level: 0,
+                                    has_bullet: false,
+                                },
                             ));
                         }
                         in_paragraph = false;
@@ -413,7 +466,7 @@ fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
     write!(writer, "|")?;
     for i in 0..col_count {
         let cell = header.get(i).map(|s| s.as_str()).unwrap_or("");
-        write!(writer, " {} |", cell.replace('|', "\\|"))?;
+        write!(writer, " {} |", escape_cell(cell))?;
     }
     writeln!(writer)?;
 
@@ -429,12 +482,18 @@ fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
         write!(writer, "|")?;
         for i in 0..col_count {
             let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            write!(writer, " {} |", cell.replace('|', "\\|"))?;
+            write!(writer, " {} |", escape_cell(cell))?;
         }
         writeln!(writer)?;
     }
 
     Ok(())
+}
+
+fn escape_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
 }
 
 fn read_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<String> {
@@ -494,6 +553,17 @@ mod tests {
         )
     }
 
+    fn multi_para_title_shape(paragraphs: &[&str]) -> String {
+        let paras: String = paragraphs
+            .iter()
+            .map(|t| format!("<a:p><a:r><a:t>{t}</a:t></a:r></a:p>"))
+            .collect();
+        format!(
+            r#"<p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
+<p:txBody>{paras}</p:txBody></p:sp>"#
+        )
+    }
+
     fn body_shape(text: &str) -> String {
         format!(
             r#"<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
@@ -517,6 +587,28 @@ mod tests {
         format!(
             r#"<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
 <p:txBody><a:p><a:r>{rpr}<a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp>"#
+        )
+    }
+
+    fn nested_bullet_shape(items: &[(&str, u32)]) -> String {
+        let paras: String = items
+            .iter()
+            .map(|(t, lvl)| {
+                format!(
+                    r#"<a:p><a:pPr lvl="{lvl}"><a:buChar char="•"/></a:pPr><a:r><a:t>{t}</a:t></a:r></a:p>"#
+                )
+            })
+            .collect();
+        format!(
+            r#"<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+<p:txBody>{paras}</p:txBody></p:sp>"#
+        )
+    }
+
+    fn mixed_shape(plain: &str, bullet: &str) -> String {
+        format!(
+            r#"<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+<p:txBody><a:p><a:r><a:t>{plain}</a:t></a:r></a:p><a:p><a:pPr><a:buChar char="•"/></a:pPr><a:r><a:t>{bullet}</a:t></a:r></a:p></p:txBody></p:sp>"#
         )
     }
 
@@ -598,6 +690,27 @@ mod tests {
     }
 
     #[rstest]
+    fn test_nested_bullet_indented() {
+        let shape = nested_bullet_shape(&[("Top", 0), ("Sub", 1)]);
+        let xml = slide_xml(&shape);
+        let pptx = make_pptx(&[("ppt/slides/slide1.xml", &xml)]);
+        let output = convert(&pptx);
+        assert!(output.contains("- Top"), "{output}");
+        assert!(output.contains("  - Sub"), "{output}");
+    }
+
+    #[rstest]
+    fn test_mixed_plain_and_bullet_in_same_shape() {
+        let shape = mixed_shape("Overview:", "First point");
+        let xml = slide_xml(&shape);
+        let pptx = make_pptx(&[("ppt/slides/slide1.xml", &xml)]);
+        let output = convert(&pptx);
+        assert!(output.contains("Overview:"), "{output}");
+        assert!(!output.contains("- Overview:"), "{output}");
+        assert!(output.contains("- First point"), "{output}");
+    }
+
+    #[rstest]
     fn test_table() {
         let tbl = table_xml(&[&["Name", "Age"], &["Alice", "30"], &["Bob", "25"]]);
         let xml = slide_xml(&tbl);
@@ -647,6 +760,30 @@ mod tests {
         let p3 = output.find("# Third").unwrap();
         assert!(p1 < p2);
         assert!(p2 < p3);
+    }
+
+    #[rstest]
+    fn test_cjk_title_paragraphs_join_without_space() {
+        let shape = multi_para_title_shape(&["日本語の", "タイトルです"]);
+        let xml = slide_xml(&shape);
+        let pptx = make_pptx(&[("ppt/slides/slide1.xml", &xml)]);
+        let output = convert(&pptx);
+        assert!(
+            output.contains("# 日本語のタイトルです"),
+            "CJK paragraphs should join without an inserted space, got:\n{output}"
+        );
+    }
+
+    #[rstest]
+    fn test_latin_title_paragraphs_join_with_space() {
+        let shape = multi_para_title_shape(&["Hello", "World"]);
+        let xml = slide_xml(&shape);
+        let pptx = make_pptx(&[("ppt/slides/slide1.xml", &xml)]);
+        let output = convert(&pptx);
+        assert!(
+            output.contains("# Hello World"),
+            "Latin paragraphs should still join with a space, got:\n{output}"
+        );
     }
 
     #[rstest]

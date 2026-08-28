@@ -33,8 +33,6 @@ impl Converter for PdfConverter {
             return Ok(());
         }
 
-        writeln!(writer, "{}", write_metadata(&doc))?;
-
         let options = RenderOptions::new()
             .with_cleanup_preset(CleanupPreset::Standard)
             .with_page_markers(PageMarkerStyle::Comment);
@@ -47,6 +45,8 @@ impl Converter for PdfConverter {
         let markdown = fix_table_separators(&markdown);
         let markdown = strip_repeated_page_lines(&markdown, doc.page_count() as usize);
 
+        let body_title = body_leading_heading(&markdown);
+        writeln!(writer, "{}", write_metadata(&doc, body_title.as_deref()))?;
         write!(writer, "{markdown}")?;
         Ok(())
     }
@@ -272,18 +272,43 @@ fn strip_repeated_page_lines(markdown: &str, page_count: usize) -> String {
     collapsed.join("\n")
 }
 
-fn write_metadata(doc: &Document) -> String {
+fn body_leading_heading(markdown: &str) -> Option<String> {
+    for line in markdown.lines() {
+        let t = line.trim();
+        if t.is_empty() || is_page_marker(t) {
+            continue;
+        }
+        return t.strip_prefix("# ").map(|s| s.trim().to_string());
+    }
+    None
+}
+
+fn titles_match(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+fn write_metadata(doc: &Document, body_title: Option<&str>) -> String {
     let meta = &doc.metadata;
     let mut out = String::new();
 
-    match &meta.title {
-        Some(title) if !title.trim().is_empty() => {
-            out.push_str(&format!("# {title}\n\n"));
-        }
-        _ => out.push_str("# PDF Document\n\n"),
+    let meta_title = meta
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+
+    match (meta_title, body_title) {
+        (_, Some(_)) => {}
+        (Some(title), None) => out.push_str(&format!("# {title}\n\n")),
+        (None, None) => out.push_str("# PDF Document\n\n"),
     }
 
     let mut fields: Vec<(&str, String)> = Vec::new();
+    if let Some(title) = meta_title
+        && body_title.is_some_and(|b| !titles_match(title, b))
+    {
+        fields.push(("Title", title.to_string()));
+    }
     if let Some(author) = &meta.author
         && !author.trim().is_empty()
     {
@@ -623,7 +648,7 @@ mod tests {
     #[test]
     fn test_write_metadata_no_info_falls_back() {
         let doc = unpdf::Document::new();
-        let out = write_metadata(&doc);
+        let out = write_metadata(&doc, None);
         assert!(out.starts_with("# PDF Document\n\n"));
         assert!(out.trim_end().ends_with("---"));
     }
@@ -632,7 +657,7 @@ mod tests {
     fn test_write_metadata_whitespace_title_falls_back() {
         let mut doc = unpdf::Document::new();
         doc.metadata.title = Some("   ".to_string());
-        let out = write_metadata(&doc);
+        let out = write_metadata(&doc, None);
         assert!(out.starts_with("# PDF Document\n\n"));
     }
 
@@ -641,9 +666,52 @@ mod tests {
         let mut doc = unpdf::Document::new();
         doc.metadata.title = Some("Report".to_string());
         doc.metadata.subject = Some("Q1 results".to_string());
-        let out = write_metadata(&doc);
+        let out = write_metadata(&doc, None);
         assert!(out.contains("# Report"));
         assert!(out.contains("**Subject**: Q1 results"));
         assert!(!out.contains("Author"));
+    }
+
+    const TITLED_PAGE: &str = "BT /F1 24 Tf 20 250 Td (Quarterly Report) Tj ET \
+         BT /F1 10 Tf 20 220 Td (This is the first paragraph of body text.) Tj ET \
+         BT /F1 10 Tf 20 200 Td (This is the second paragraph of body text.) Tj ET \
+         BT /F1 10 Tf 20 180 Td (This is the third paragraph of body text.) Tj ET \
+         BT /F1 16 Tf 20 150 Td (A Subheading) Tj ET \
+         BT /F1 10 Tf 20 130 Td (More body text under the subheading.) Tj ET";
+
+    #[test]
+    fn test_no_duplicate_title_when_info_title_absent() {
+        let out = convert(&make_pdf(&[TITLED_PAGE], "[0 0 300 300]", None));
+        assert_eq!(
+            out.matches("# Quarterly Report").count(),
+            1,
+            "title should appear once, from the body heading, not also as a synthetic preamble:\n{out}"
+        );
+        assert!(!out.contains("PDF Document"), "no title fallback should leak through:\n{out}");
+    }
+
+    #[test]
+    fn test_no_duplicate_title_when_info_title_matches_body() {
+        let info = "<< /Title (Quarterly Report) >>";
+        let out = convert(&make_pdf(&[TITLED_PAGE], "[0 0 300 300]", Some(info)));
+        assert_eq!(
+            out.matches("# Quarterly Report").count(),
+            1,
+            "matching Info-dict title and body heading should collapse into one heading:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_differing_info_title_kept_as_field() {
+        let info = "<< /Title (Q3 FY24 Report - Draft) >>";
+        let out = convert(&make_pdf(&[TITLED_PAGE], "[0 0 300 300]", Some(info)));
+        assert!(
+            out.contains("# Quarterly Report"),
+            "body heading should still lead the document:\n{out}"
+        );
+        assert!(
+            out.contains("**Title**: Q3 FY24 Report - Draft"),
+            "differing Info-dict title should survive as a metadata field:\n{out}"
+        );
     }
 }

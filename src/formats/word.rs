@@ -24,8 +24,11 @@ impl Converter for WordConverter {
         let rels = read_entry(&mut archive, "word/_rels/document.xml.rels")
             .map(|xml| parse_relationships(&xml))
             .unwrap_or_default();
+        let numbering = read_entry(&mut archive, "word/numbering.xml")
+            .map(|xml| parse_numbering(&xml))
+            .unwrap_or_default();
         let document_xml = read_entry(&mut archive, "word/document.xml")?;
-        let paragraphs = parse_document(&document_xml, &rels)?;
+        let paragraphs = parse_document(&document_xml, &rels, &numbering)?;
 
         let mut first = true;
         for para in &paragraphs {
@@ -45,8 +48,12 @@ impl Converter for WordConverter {
                         writeln!(writer, "{text}")?;
                     }
                 }
-                Paragraph::ListItem(text) => {
-                    writeln!(writer, "- {text}")?;
+                Paragraph::ListItem { text, level, marker } => {
+                    let indent = "  ".repeat(*level as usize);
+                    match marker {
+                        ListMarker::Bullet => writeln!(writer, "{indent}- {text}")?,
+                        ListMarker::Ordered(n) => writeln!(writer, "{indent}{n}. {text}")?,
+                    }
                 }
                 Paragraph::BlockQuote(text) => {
                     if !first {
@@ -71,12 +78,25 @@ impl Converter for WordConverter {
 enum Paragraph {
     Heading(u8, String),
     Text(String),
-    ListItem(String),
+    ListItem {
+        text: String,
+        level: u32,
+        marker: ListMarker,
+    },
     BlockQuote(String),
     Table(Vec<Vec<String>>),
 }
 
-fn parse_document(xml: &str, rels: &HashMap<String, String>) -> Result<Vec<Paragraph>> {
+enum ListMarker {
+    Bullet,
+    Ordered(u32),
+}
+
+fn parse_document(
+    xml: &str,
+    rels: &HashMap<String, String>,
+    numbering: &HashMap<(String, u32), bool>,
+) -> Result<Vec<Paragraph>> {
     let mut paragraphs = Vec::new();
     let mut reader = Reader::from_str(xml);
 
@@ -90,11 +110,12 @@ fn parse_document(xml: &str, rels: &HashMap<String, String>) -> Result<Vec<Parag
     let mut is_bold = false;
     let mut is_italic = false;
     let mut is_list_item = false;
+    let mut current_ilvl: u32 = 0;
+    let mut current_num_id: Option<String> = None;
+    let mut list_counters: HashMap<(String, u32), u32> = HashMap::new();
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut table_row: Vec<String> = Vec::new();
     let mut cell_text = String::new();
-    // Runs inside a `<w:hyperlink>` are buffered and wrapped in `[...](url)`
-    // once the hyperlink closes, since a link can span multiple formatted runs.
     let mut hyperlink_target: Option<String> = None;
     let mut hyperlink_buf = String::new();
     let mut in_hyperlink = false;
@@ -105,12 +126,17 @@ fn parse_document(xml: &str, rels: &HashMap<String, String>) -> Result<Vec<Parag
                 let local = local_name(e.name().as_ref());
                 match local.as_str() {
                     "p" => {
+                        if in_table_cell && !cell_text.is_empty() {
+                            cell_text.push_str("<br>");
+                        }
                         in_paragraph = true;
                         current_text.clear();
                         current_style = None;
                         is_bold = false;
                         is_italic = false;
                         is_list_item = false;
+                        current_ilvl = 0;
+                        current_num_id = None;
                     }
                     "r" => in_run = true,
                     "hyperlink" => {
@@ -153,7 +179,14 @@ fn parse_document(xml: &str, rels: &HashMap<String, String>) -> Result<Vec<Parag
                     }
                     "b" => is_bold = true,
                     "i" => is_italic = true,
-                    "numPr" | "ilvl" => is_list_item = true,
+                    "numPr" => is_list_item = true,
+                    "ilvl" => {
+                        is_list_item = true;
+                        current_ilvl = attr_value(&e, "val")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0);
+                    }
+                    "numId" => current_num_id = attr_value(&e, "val"),
                     _ => {}
                 }
             }
@@ -176,23 +209,41 @@ fn parse_document(xml: &str, rels: &HashMap<String, String>) -> Result<Vec<Parag
                 let local = local_name(e.name().as_ref());
                 match local.as_str() {
                     "p" => {
-                        if in_table_cell {
-                            if !cell_text.is_empty() {
-                                // cell text accumulated separately
-                            }
-                        } else if in_paragraph {
+                        if !in_table_cell && in_paragraph {
+                            let list_item = |list_counters: &mut HashMap<(String, u32), u32>| {
+                                let ordered = current_num_id.as_deref().is_some_and(|id| {
+                                    numbering
+                                        .get(&(id.to_string(), current_ilvl))
+                                        .copied()
+                                        .unwrap_or(false)
+                                });
+                                let marker = if ordered {
+                                    let key =
+                                        (current_num_id.clone().unwrap_or_default(), current_ilvl);
+                                    let n = list_counters.entry(key).or_insert(0);
+                                    *n += 1;
+                                    ListMarker::Ordered(*n)
+                                } else {
+                                    ListMarker::Bullet
+                                };
+                                Paragraph::ListItem {
+                                    text: current_text.clone(),
+                                    level: current_ilvl,
+                                    marker,
+                                }
+                            };
                             let para = if let Some(ref style) = current_style {
                                 if let Some(level) = heading_level(style) {
                                     Paragraph::Heading(level, current_text.clone())
                                 } else if is_blockquote(style) {
                                     Paragraph::BlockQuote(current_text.clone())
                                 } else if is_list_item {
-                                    Paragraph::ListItem(current_text.clone())
+                                    list_item(&mut list_counters)
                                 } else {
                                     Paragraph::Text(current_text.clone())
                                 }
                             } else if is_list_item {
-                                Paragraph::ListItem(current_text.clone())
+                                list_item(&mut list_counters)
                             } else {
                                 Paragraph::Text(current_text.clone())
                             };
@@ -288,6 +339,71 @@ fn parse_relationships(xml: &str) -> HashMap<String, String> {
     rels
 }
 
+fn attr_value(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
+    let prefixed = format!("w:{name}");
+    e.attributes()
+        .flatten()
+        .find(|a| a.key.as_ref() == name.as_bytes() || a.key.as_ref() == prefixed.as_bytes())
+        .map(|a| String::from_utf8_lossy(&a.value).to_string())
+}
+
+fn parse_numbering(xml: &str) -> HashMap<(String, u32), bool> {
+    let mut reader = Reader::from_str(xml);
+    let mut abstract_fmt: HashMap<(String, u32), String> = HashMap::new();
+    let mut num_to_abstract: HashMap<String, String> = HashMap::new();
+
+    let mut current_abstract_id: Option<String> = None;
+    let mut current_num_id: Option<String> = None;
+    let mut current_lvl: Option<u32> = None;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let local = local_name(e.name().as_ref());
+                match local.as_str() {
+                    "abstractNum" => current_abstract_id = attr_value(&e, "abstractNumId"),
+                    "num" => current_num_id = attr_value(&e, "numId"),
+                    "lvl" => {
+                        current_lvl = attr_value(&e, "ilvl").and_then(|v| v.parse().ok());
+                    }
+                    "abstractNumId" => {
+                        if let (Some(num_id), Some(val)) = (&current_num_id, attr_value(&e, "val"))
+                        {
+                            num_to_abstract.insert(num_id.clone(), val);
+                        }
+                    }
+                    "numFmt" => {
+                        if let (Some(abs_id), Some(lvl), Some(val)) =
+                            (&current_abstract_id, current_lvl, attr_value(&e, "val"))
+                        {
+                            abstract_fmt.insert((abs_id.clone(), lvl), val);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) => match local_name(e.name().as_ref()).as_str() {
+                "abstractNum" => current_abstract_id = None,
+                "num" => current_num_id = None,
+                "lvl" => current_lvl = None,
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    let mut result = HashMap::new();
+    for (num_id, abs_id) in &num_to_abstract {
+        for ((a, lvl), fmt) in &abstract_fmt {
+            if a == abs_id {
+                result.insert((num_id.clone(), *lvl), fmt != "bullet" && fmt != "none");
+            }
+        }
+    }
+    result
+}
+
 fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
@@ -303,7 +419,7 @@ fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
     write!(writer, "|")?;
     for i in 0..col_count {
         let cell = header.get(i).map(|s| s.as_str()).unwrap_or("");
-        write!(writer, " {} |", cell.replace('|', "\\|"))?;
+        write!(writer, " {} |", escape_cell(cell))?;
     }
     writeln!(writer)?;
 
@@ -319,12 +435,18 @@ fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
         write!(writer, "|")?;
         for i in 0..col_count {
             let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            write!(writer, " {} |", cell.replace('|', "\\|"))?;
+            write!(writer, " {} |", escape_cell(cell))?;
         }
         writeln!(writer)?;
     }
 
     Ok(())
+}
+
+fn escape_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
 }
 
 fn format_run_text(text: &str, bold: bool, italic: bool) -> String {
@@ -417,6 +539,19 @@ mod tests {
         String::from_utf8(out).unwrap()
     }
 
+    fn make_docx_with_numbering(document_xml: &str, numbering_xml: &str) -> Vec<u8> {
+        let buf = Vec::new();
+        let cursor = Cursor::new(buf);
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(document_xml.as_bytes()).unwrap();
+        zip.start_file("word/numbering.xml", options).unwrap();
+        zip.write_all(numbering_xml.as_bytes()).unwrap();
+        zip.finish().unwrap().into_inner()
+    }
+
     #[test]
     fn test_hyperlink_resolved_from_relationships() {
         let body =
@@ -467,5 +602,65 @@ mod tests {
         let docx = make_docx(&doc_xml(body), None);
         let out = convert(&docx);
         assert!(out.contains("Hello world"));
+    }
+
+    const NUMBERING_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="0">
+    <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl>
+    <w:lvl w:ilvl="1"><w:numFmt w:val="lowerLetter"/></w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="1">
+    <w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+  <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+</w:numbering>"#;
+
+    fn numbered_item(text: &str, num_id: u32, ilvl: u32) -> String {
+        format!(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="{num_id}"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    }
+
+    #[test]
+    fn test_ordered_list_numbered_sequentially() {
+        let body = format!(
+            "{}{}{}",
+            numbered_item("First", 1, 0),
+            numbered_item("Second", 1, 0),
+            numbered_item("Third", 1, 0)
+        );
+        let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
+        let out = convert(&docx);
+        assert!(out.contains("1. First"), "{out}");
+        assert!(out.contains("2. Second"), "{out}");
+        assert!(out.contains("3. Third"), "{out}");
+    }
+
+    #[test]
+    fn test_bullet_numbering_format_stays_a_bullet() {
+        let body = numbered_item("Item", 2, 0);
+        let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
+        let out = convert(&docx);
+        assert!(out.contains("- Item"), "{out}");
+        assert!(!out.contains("1. Item"), "{out}");
+    }
+
+    #[test]
+    fn test_nested_list_item_is_indented() {
+        let body = format!("{}{}", numbered_item("Top", 1, 0), numbered_item("Sub", 1, 1));
+        let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
+        let out = convert(&docx);
+        assert!(out.contains("1. Top"), "{out}");
+        assert!(out.contains("  1. Sub"), "{out}");
+    }
+
+    #[test]
+    fn test_multi_paragraph_table_cell_joined_with_br() {
+        let body = r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Line one</w:t></w:r></w:p><w:p><w:r><w:t>Line two</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        let docx = make_docx(&doc_xml(body), None);
+        let out = convert(&docx);
+        assert!(out.contains("Line one<br>Line two"), "{out}");
     }
 }

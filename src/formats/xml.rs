@@ -49,12 +49,7 @@ fn parse_xml(text: &str) -> Result<XmlElement> {
                 let attributes: Vec<(String, String)> = e
                     .attributes()
                     .flatten()
-                    .map(|a| {
-                        (
-                            String::from_utf8_lossy(a.key.as_ref()).to_string(),
-                            String::from_utf8_lossy(&a.value).to_string(),
-                        )
-                    })
+                    .map(|a| (a.key.as_ref().to_string(), a.value.to_string()))
                     .collect();
                 stack.push(XmlElement {
                     name,
@@ -67,12 +62,7 @@ fn parse_xml(text: &str) -> Result<XmlElement> {
                 let attributes: Vec<(String, String)> = e
                     .attributes()
                     .flatten()
-                    .map(|a| {
-                        (
-                            String::from_utf8_lossy(a.key.as_ref()).to_string(),
-                            String::from_utf8_lossy(&a.value).to_string(),
-                        )
-                    })
+                    .map(|a| (a.key.as_ref().to_string(), a.value.to_string()))
                     .collect();
                 let elem = XmlElement {
                     name,
@@ -86,14 +76,14 @@ fn parse_xml(text: &str) -> Result<XmlElement> {
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = e.decode().unwrap_or_default().trim().to_string();
+                let text = e.trim().to_string();
                 if !text.is_empty()
                     && let Some(parent) = stack.last_mut() {
                         parent.children.push(XmlNode::Text(text));
                     }
             }
             Ok(Event::CData(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref()).trim().to_string();
+                let text = e.trim().to_string();
                 if !text.is_empty()
                     && let Some(parent) = stack.last_mut() {
                         parent.children.push(XmlNode::Text(text));
@@ -290,12 +280,11 @@ fn escape_pipe(s: &str) -> String {
         .replace('\n', "<br>")
 }
 
-fn local_name(name: &[u8]) -> String {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    if let Some(pos) = s.rfind(':') {
-        s[pos + 1..].to_string()
+fn local_name(name: &str) -> String {
+    if let Some(pos) = name.rfind(':') {
+        name[pos + 1..].to_string()
     } else {
-        s.to_string()
+        name.to_string()
     }
 }
 

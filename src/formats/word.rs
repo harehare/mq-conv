@@ -145,11 +145,8 @@ fn parse_document(
                         hyperlink_target = e
                             .attributes()
                             .flatten()
-                            .find(|attr| attr.key.as_ref() == b"r:id" || attr.key.as_ref() == b"id")
-                            .and_then(|attr| {
-                                rels.get(&String::from_utf8_lossy(&attr.value).to_string())
-                                    .cloned()
-                            });
+                            .find(|attr| attr.key.as_ref() == "r:id" || attr.key.as_ref() == "id")
+                            .and_then(|attr| rels.get(attr.value.as_ref()).cloned());
                     }
                     "tbl" => {
                         in_table = true;
@@ -171,9 +168,8 @@ fn parse_document(
                 match local.as_str() {
                     "pStyle" => {
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"w:val" || attr.key.as_ref() == b"val" {
-                                current_style =
-                                    Some(String::from_utf8_lossy(&attr.value).to_string());
+                            if attr.key.as_ref() == "w:val" || attr.key.as_ref() == "val" {
+                                current_style = Some(attr.value.to_string());
                             }
                         }
                     }
@@ -192,7 +188,7 @@ fn parse_document(
             }
             Ok(Event::Text(e)) => {
                 if in_run || in_table_cell {
-                    let text = e.decode().unwrap_or_default().to_string();
+                    let text = e.to_string();
                     if in_table_cell {
                         cell_text.push_str(&text);
                     } else if in_paragraph {
@@ -320,10 +316,8 @@ fn parse_relationships(xml: &str) -> HashMap<String, String> {
                 let mut target = None;
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"Id" => id = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                        b"Target" => {
-                            target = Some(String::from_utf8_lossy(&attr.value).to_string())
-                        }
+                        "Id" => id = Some(attr.value.to_string()),
+                        "Target" => target = Some(attr.value.to_string()),
                         _ => {}
                     }
                 }
@@ -343,8 +337,8 @@ fn attr_value(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
     let prefixed = format!("w:{name}");
     e.attributes()
         .flatten()
-        .find(|a| a.key.as_ref() == name.as_bytes() || a.key.as_ref() == prefixed.as_bytes())
-        .map(|a| String::from_utf8_lossy(&a.value).to_string())
+        .find(|a| a.key.as_ref() == name || a.key.as_ref() == prefixed)
+        .map(|a| a.value.to_string())
 }
 
 fn parse_numbering(xml: &str) -> HashMap<(String, u32), bool> {
@@ -493,12 +487,11 @@ fn read_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Resul
     Ok(content)
 }
 
-fn local_name(name: &[u8]) -> String {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    if let Some(pos) = s.rfind(':') {
-        s[pos + 1..].to_string()
+fn local_name(name: &str) -> String {
+    if let Some(pos) = name.rfind(':') {
+        name[pos + 1..].to_string()
     } else {
-        s.to_string()
+        name.to_string()
     }
 }
 

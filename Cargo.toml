@@ -151,7 +151,7 @@ miette = {version = "7", features = ["fancy"]}
 thiserror = "2"
 
 calamine = {version = "0.36", optional = true}
-chardetng = {version = "0.1", optional = true}
+chardetng = {version = "1.0", optional = true}
 csv = {version = "1", optional = true}
 docx-rs = {version = "0.4", optional = true}
 encoding_rs = {version = "0.8", optional = true}

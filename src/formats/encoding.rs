@@ -23,9 +23,9 @@ fn decode_with(bytes: &[u8], hint: Option<&'static Encoding>) -> String {
 }
 
 fn detect_encoding(bytes: &[u8]) -> &'static Encoding {
-    let mut detector = chardetng::EncodingDetector::new();
+    let mut detector = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
     detector.feed(bytes, true);
-    detector.guess(None, true)
+    detector.guess(None, chardetng::Utf8Detection::Allow)
 }
 
 fn sniff_meta_charset(bytes: &[u8]) -> Option<&'static Encoding> {

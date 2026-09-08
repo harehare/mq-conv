@@ -112,6 +112,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "atoi_simd"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -964,9 +970,9 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.12.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5081f264ed7adee96ea4b4778b6bb9da0a7228b084587aa3bd3ff05da7c5a3b"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -1505,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "mq-conv"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "calamine",
  "chardetng",
@@ -1538,9 +1544,9 @@ dependencies = [
 
 [[package]]
 name = "mq-markdown"
-version = "0.8.3"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2aa154069a69d3f8a52013d1cf12f37daa626f002c596489449ed8bad99632c7"
+checksum = "c182a42c959c77101dd461c257e62b919309cf92339e2c7bb289ce21b7fc3e99"
 dependencies = [
  "ego-tree",
  "itertools",
@@ -1550,10 +1556,10 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
- "serde_yaml",
  "smol_str",
  "unicode-width 0.2.2",
  "url",
+ "yaml-rust2",
 ]
 
 [[package]]
@@ -3146,6 +3152,17 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix 1.1.4",
+]
+
+[[package]]
+name = "yaml-rust2"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6edb26322e610d4f04b7cd34478317685d24d0999437e551fb97c5441151041"
+dependencies = [
+ "arraydeque",
+ "encoding_rs",
+ "hashlink",
 ]
 
 [[package]]

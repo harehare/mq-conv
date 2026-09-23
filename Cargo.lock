@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "mq-conv"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "calamine",
  "chardetng",
@@ -1585,9 +1585,9 @@ dependencies = [
 
 [[package]]
 name = "mq-markdown"
-version = "0.8.5"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c182a42c959c77101dd461c257e62b919309cf92339e2c7bb289ce21b7fc3e99"
+checksum = "e8d90b4f7838e1ea5e38799c3cdf3fa7f7bfe0110fdcdf44d6b235ef146ab161"
 dependencies = [
  "ego-tree",
  "itertools",
@@ -3363,12 +3363,11 @@ dependencies = [
 
 [[package]]
 name = "yaml-rust2"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6edb26322e610d4f04b7cd34478317685d24d0999437e551fb97c5441151041"
+checksum = "57e5b818a27a4cd30884ea380857a5e56f7ec3ba24a3990a3cc0b95af3238e18"
 dependencies = [
  "arraydeque",
- "encoding_rs",
  "hashlink",
 ]
 

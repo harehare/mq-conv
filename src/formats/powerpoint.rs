@@ -5,7 +5,7 @@ use quick_xml::events::Event;
 
 use crate::converter::{ConvertOptions, Converter};
 use crate::error::{Error, Result};
-use crate::formats::media::{extract_related_images, parse_relationships};
+use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
 
 pub struct PowerPointConverter;
 
@@ -46,6 +46,9 @@ impl Converter for PowerPointConverter {
                 .parse::<u32>()
                 .unwrap_or(0)
         });
+
+        // One writer for the whole deck so image names stay unique across slides.
+        let mut media = MediaWriter::from_options(options);
 
         for (idx, slide_name) in slide_names.iter().enumerate() {
             let xml = read_entry(&mut archive, slide_name)?;
@@ -118,11 +121,11 @@ impl Converter for PowerPointConverter {
             }
 
             // Pictures (only when an image directory was requested)
-            if let Some(dir) = options.image_dir.as_deref() {
+            if let Some(media) = media.as_mut() {
                 let rels_name = slide_name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
                 if let Ok(rels_xml) = read_entry(&mut archive, &rels_name) {
                     let rels = parse_relationships(&rels_xml);
-                    let images = extract_related_images(&mut archive, "ppt/slides/", &rels, dir);
+                    let images = extract_related_images(&mut archive, "ppt/slides/", &rels, media);
                     for id in slide_image_ids(&xml) {
                         if let Some(path) = images.get(&id) {
                             writeln!(writer, "![image]({path})")?;
@@ -842,5 +845,81 @@ mod tests {
         let output = convert(&pptx);
         assert!(output.contains("# Main Title"));
         assert!(output.contains("## Sub Title"));
+    }
+
+    fn pic_slide(rid: &str) -> String {
+        slide_xml(&format!(
+            r#"<p:pic><p:blipFill><a:blip r:embed="{rid}"/></p:blipFill></p:pic>"#
+        ))
+    }
+
+    fn rels_to(target: &str) -> String {
+        format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="image" Target="{target}"/></Relationships>"#
+        )
+    }
+
+    fn convert_with_images(pptx: &[u8], dir: &std::path::Path) -> String {
+        let options = ConvertOptions {
+            image_dir: Some(dir.to_path_buf()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        PowerPointConverter
+            .convert_with(pptx, &mut out, &options)
+            .unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    fn image_links(md: &str) -> Vec<String> {
+        md.lines()
+            .filter_map(|l| l.strip_prefix("![image](")?.strip_suffix(')'))
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn slides_with_same_named_images_keep_their_own_image() {
+        let (s1, s2) = (pic_slide("rId1"), pic_slide("rId1"));
+        let (r1, r2) = (rels_to("../media/image1.png"), rels_to("../other/image1.png"));
+        let pptx = make_pptx(&[
+            ("ppt/slides/slide1.xml", &s1),
+            ("ppt/slides/_rels/slide1.xml.rels", &r1),
+            ("ppt/slides/slide2.xml", &s2),
+            ("ppt/slides/_rels/slide2.xml.rels", &r2),
+            ("ppt/media/image1.png", "CHART"),
+            ("ppt/other/image1.png", "MAP"),
+        ]);
+        let dir = std::env::temp_dir().join(format!("mq-conv-pptx-names-{}", std::process::id()));
+        let md = convert_with_images(&pptx, &dir);
+
+        let links = image_links(&md);
+        assert_eq!(links.len(), 2, "{md}");
+        assert_ne!(links[0], links[1], "both slides link one file:\n{md}");
+        let read = |link: &str| std::fs::read_to_string(link).unwrap();
+        assert_eq!((read(&links[0]).as_str(), read(&links[1]).as_str()), ("CHART", "MAP"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_image_shared_by_slides_is_written_once() {
+        let s = pic_slide("rId1");
+        let r = rels_to("../media/image1.png");
+        let pptx = make_pptx(&[
+            ("ppt/slides/slide1.xml", &s),
+            ("ppt/slides/_rels/slide1.xml.rels", &r),
+            ("ppt/slides/slide2.xml", &s),
+            ("ppt/slides/_rels/slide2.xml.rels", &r),
+            ("ppt/media/image1.png", "LOGO"),
+        ]);
+        let dir = std::env::temp_dir().join(format!("mq-conv-pptx-shared-{}", std::process::id()));
+        let md = convert_with_images(&pptx, &dir);
+
+        let links = image_links(&md);
+        assert_eq!(links.len(), 2, "{md}");
+        assert_eq!(links[0], links[1], "{md}");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

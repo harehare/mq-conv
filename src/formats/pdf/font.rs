@@ -471,9 +471,15 @@ impl Font {
                     Legacy::Big5 => encoding_rs::BIG5,
                     _ => encoding_rs::EUC_KR,
                 };
-                let (s, _, _) = enc.decode(slice);
+                // The font's own ToUnicode map is authoritative; the legacy
+                // character set is only the fallback for unmapped codes.
+                let code = slice.iter().fold(0u32, |acc, &b| (acc << 8) | b as u32);
+                let text = match self.to_unicode.as_ref().and_then(|m| m.lookup(code)) {
+                    Some(mapped) => mapped,
+                    None => enc.decode(slice).0.into_owned(),
+                };
                 out.push(DecodedGlyph {
-                    text: s.into_owned(),
+                    text,
                     width: if len == 1 { 500.0 } else { self.default_width },
                     is_space: len == 1 && slice[0] == 32,
                 });
@@ -757,6 +763,33 @@ mod tests {
         let font = Font::load(&doc, &dict);
         let w = |code: u8| font.decode(&[0, code])[0].width;
         assert_eq!((w(5), w(6), w(10), w(99)), (250.0, 300.0, 400.0, 1000.0));
+    }
+
+    #[test]
+    fn legacy_cjk_font_prefers_to_unicode_over_the_charset() {
+        // 0x8140 is an ideographic space in Shift-JIS, but this font's own
+        // ToUnicode map says ★; 0x82A0 is unmapped and falls back to Shift-JIS.
+        let cmap = "1 begincodespacerange <00> <FFFF> endcodespacerange\n\
+                    1 beginbfchar <8140> <2605> endbfchar";
+        let mut doc = Document::with_version("1.5");
+        let id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            cmap.as_bytes().to_vec(),
+        )));
+        let dict = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "Test",
+            "Encoding" => "90ms-RKSJ-H",
+            "ToUnicode" => Object::Reference(id),
+        };
+        let font = Font::load(&doc, &dict);
+        let text: String = font
+            .decode(&[0x81, 0x40, b'A', 0x82, 0xA0])
+            .into_iter()
+            .map(|g| g.text)
+            .collect();
+        assert_eq!(text, "★Aあ");
     }
 
     #[test]

@@ -6,19 +6,42 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::converter::ConvertOptions;
+
 /// Writes media files into a directory, keeping file names unique.
+///
+/// One writer must serve a whole document: uniqueness is tracked per writer,
+/// and the same source `hint` is written only once.
 pub struct MediaWriter {
     dir: PathBuf,
+    /// Directory prefix of the Markdown links (may differ from `dir`).
+    link_dir: PathBuf,
     used: HashSet<String>,
+    saved: std::collections::HashMap<String, String>,
 }
 
 impl MediaWriter {
-    pub fn new(dir: &Path) -> std::io::Result<Self> {
+    pub fn new(dir: &Path, link_dir: &Path) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         Ok(Self {
             dir: dir.to_path_buf(),
+            link_dir: link_dir.to_path_buf(),
             used: HashSet::new(),
+            saved: std::collections::HashMap::new(),
         })
+    }
+
+    /// A writer for `options.image_dir`, if image extraction was requested
+    /// and the directory could be created.
+    pub fn from_options(options: &ConvertOptions) -> Option<Self> {
+        let dir = options.image_dir.as_deref()?;
+        let link_dir = options.image_link_dir.as_deref().unwrap_or(dir);
+        Self::new(dir, link_dir).ok()
+    }
+
+    /// Markdown path of `hint` if it was already saved by this writer.
+    pub fn saved_path(&self, hint: &str) -> Option<&str> {
+        self.saved.get(hint).map(String::as_str)
     }
 
     /// Save `data` under a sanitised, unique version of `hint`'s file name and
@@ -50,9 +73,10 @@ impl MediaWriter {
             n += 1;
             name = format!("{stem}-{n}{ext}");
         }
-        let path = self.dir.join(&name);
-        std::fs::write(&path, data).ok()?;
-        Some(md_path(&path))
+        std::fs::write(self.dir.join(&name), data).ok()?;
+        let link = md_path(&self.link_dir.join(&name));
+        self.saved.insert(hint.to_string(), link.clone());
+        Some(link)
     }
 }
 
@@ -65,6 +89,49 @@ pub fn md_path(path: &Path) -> String {
     } else {
         s
     }
+}
+
+/// `target` as a path relative to the directory `from`, so a file saved in
+/// `from` can link to it. Falls back to the absolute target when the two share
+/// no root (e.g. different drives).
+pub fn relative_path(from: &Path, target: &Path) -> PathBuf {
+    use std::path::Component;
+
+    fn normalized(p: &Path) -> Vec<Component<'_>> {
+        let mut out: Vec<Component> = Vec::new();
+        for c in p.components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir if matches!(out.last(), Some(Component::Normal(_))) => {
+                    out.pop();
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    let (Ok(from_abs), Ok(target_abs)) = (std::path::absolute(from), std::path::absolute(target))
+    else {
+        return target.to_path_buf();
+    };
+    let (from_parts, target_parts) = (normalized(&from_abs), normalized(&target_abs));
+    let common = from_parts
+        .iter()
+        .zip(&target_parts)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common == 0 {
+        return target_abs;
+    }
+    let mut rel = PathBuf::new();
+    for _ in common..from_parts.len() {
+        rel.push("..");
+    }
+    for c in &target_parts[common..] {
+        rel.push(c);
+    }
+    rel
 }
 
 pub fn is_image_name(name: &str) -> bool {
@@ -132,14 +199,11 @@ pub fn extract_related_images(
     archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
     base_dir: &str,
     rels: &HashMap<String, String>,
-    dir: &Path,
+    writer: &mut MediaWriter,
 ) -> HashMap<String, String> {
     use std::io::Read;
 
     let mut out = HashMap::new();
-    let Ok(mut writer) = MediaWriter::new(dir) else {
-        return out;
-    };
     let mut ids: Vec<&String> = rels.keys().collect();
     ids.sort();
     for id in ids {
@@ -148,6 +212,10 @@ pub fn extract_related_images(
             continue;
         }
         let full = resolve_archive_path(base_dir, target);
+        if let Some(path) = writer.saved_path(&full) {
+            out.insert(id.clone(), path.to_string());
+            continue;
+        }
         let Ok(mut file) = archive.by_name(&full) else {
             continue;
         };
@@ -168,7 +236,7 @@ mod tests {
     #[test]
     fn save_sanitises_and_deduplicates_names() {
         let dir = std::env::temp_dir().join(format!("mq-conv-media-{}", std::process::id()));
-        let mut w = MediaWriter::new(&dir).unwrap();
+        let mut w = MediaWriter::new(&dir, &dir).unwrap();
         let a = w.save("word/media/my image (1).png", b"a").unwrap();
         let b = w.save("ppt/media/my image (1).png", b"b").unwrap();
         assert_ne!(a, b);
@@ -176,6 +244,16 @@ mod tests {
         assert!(b.ends_with("my_image__1_-2.png"), "{b}");
         assert_eq!(std::fs::read(dir.join("my_image__1_.png")).unwrap(), b"a");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn relative_path_links_from_the_markdown_directory() {
+        let rel = |from: &str, to: &str| relative_path(Path::new(from), Path::new(to));
+        assert_eq!(rel("out", "img"), Path::new("../img"));
+        assert_eq!(rel("out", "out/img"), Path::new("img"));
+        assert_eq!(rel("out/docs", "img/a"), Path::new("../../img/a"));
+        assert_eq!(rel("out/../out", "./img"), Path::new("../img"));
+        assert_eq!(rel("out", "out"), Path::new(""));
     }
 
     #[test]

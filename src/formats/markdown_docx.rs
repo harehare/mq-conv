@@ -20,6 +20,10 @@ impl Converter for MarkdownDocxConverter {
         "docx"
     }
 
+    fn is_text_output(&self) -> bool {
+        false
+    }
+
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
         let markdown = std::str::from_utf8(input).map_err(|e| Error::Conversion {
             format: "markdown-docx",

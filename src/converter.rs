@@ -9,6 +9,10 @@ pub struct ConvertOptions {
     /// Write embedded images into this directory and reference them from the
     /// Markdown output.
     pub image_dir: Option<PathBuf>,
+    /// Directory prefix used in Markdown image links. Defaults to
+    /// `image_dir`; set it when the Markdown is saved somewhere other than
+    /// the working directory so links stay valid relative to that file.
+    pub image_link_dir: Option<PathBuf>,
     /// Tesseract language used for OCR fallbacks (default "eng").
     pub ocr_lang: Option<String>,
 }
@@ -29,5 +33,11 @@ pub trait Converter {
     fn format_name(&self) -> &'static str;
     fn output_extension(&self) -> &'static str {
         "md"
+    }
+
+    /// Whether the output is UTF-8 text. Binary outputs (DOCX, EPUB) must not
+    /// go through text-oriented post-processing such as token budgeting.
+    fn is_text_output(&self) -> bool {
+        true
     }
 }

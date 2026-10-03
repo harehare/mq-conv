@@ -8,6 +8,7 @@ use miette::IntoDiagnostic;
 use mq_conv::budget;
 use mq_conv::converter::ConvertOptions;
 use mq_conv::detect::Format;
+use mq_conv::formats::media::relative_path;
 use mq_conv::parallel::par_map;
 
 #[derive(Parser, Debug)]
@@ -169,6 +170,8 @@ fn resolve_converter(
 struct Converted {
     bytes: Vec<u8>,
     extension: &'static str,
+    /// False for binary targets (DOCX, EPUB), which must be written verbatim.
+    is_text: bool,
 }
 
 fn convert_bytes(
@@ -176,6 +179,7 @@ fn convert_bytes(
     filename: Option<&str>,
     args: &Args,
     image_dir: Option<PathBuf>,
+    image_link_dir: Option<PathBuf>,
 ) -> miette::Result<Converted> {
     let detected = if let Some(f) = args.format.as_ref() {
         f.clone().into()
@@ -190,6 +194,7 @@ fn convert_bytes(
 
     let options = ConvertOptions {
         image_dir,
+        image_link_dir,
         ocr_lang: Some(args.ocr_lang.clone()),
     };
     let mut bytes = Vec::new();
@@ -199,6 +204,7 @@ fn convert_bytes(
     Ok(Converted {
         bytes,
         extension: converter.output_extension(),
+        is_text: converter.is_text_output(),
     })
 }
 
@@ -211,6 +217,12 @@ fn write_budgeted(
     if args.max_tokens.is_none() && args.cursor == 0 {
         writer.write_all(&converted.bytes).into_diagnostic()?;
         return Ok(());
+    }
+    if !converted.is_text {
+        return Err(miette::miette!(
+            "--max-tokens and --cursor only apply to text output; .{} output is binary",
+            converted.extension
+        ));
     }
     let text = String::from_utf8_lossy(&converted.bytes);
     let chunk = budget::take_chunk(&text, args.cursor, args.max_tokens)
@@ -247,10 +259,21 @@ fn image_dir_for(args: &Args, path: &Path) -> Option<PathBuf> {
     })
 }
 
+/// Directory prefix for image links in Markdown that is saved to
+/// `--output-dir`: links must resolve from the output file, not the cwd.
+fn image_link_dir_for(args: &Args, image_dir: &Path) -> Option<PathBuf> {
+    let output_dir = args.output_dir.as_ref()?;
+    Some(relative_path(output_dir, image_dir))
+}
+
 fn convert_file(path: &Path, args: &Args) -> miette::Result<Converted> {
     let input = fs::read(path).into_diagnostic()?;
     let filename = path.file_name().map(|n| n.to_string_lossy().into_owned());
-    convert_bytes(&input, filename.as_deref(), args, image_dir_for(args, path))
+    let image_dir = image_dir_for(args, path);
+    let image_link_dir = image_dir
+        .as_deref()
+        .and_then(|dir| image_link_dir_for(args, dir));
+    convert_bytes(&input, filename.as_deref(), args, image_dir, image_link_dir)
         .map_err(|e| miette::miette!("{}: {e}", path.display()))
 }
 
@@ -279,7 +302,7 @@ fn main() -> miette::Result<()> {
         let mut buf = Vec::new();
         io::stdin().read_to_end(&mut buf).into_diagnostic()?;
 
-        let converted = convert_bytes(&buf, None, &args, args.extract_images.clone())?;
+        let converted = convert_bytes(&buf, None, &args, args.extract_images.clone(), None)?;
         let stdout = io::stdout();
         let mut writer = BufWriter::new(stdout.lock());
         write_budgeted(&converted, &args, &mut writer)?;

@@ -5,7 +5,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::converter::{ConvertOptions, Converter};
-use crate::formats::media::{extract_related_images, parse_relationships};
+use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
 use crate::error::{Error, Result};
 
 pub struct WordConverter;
@@ -34,10 +34,8 @@ impl Converter for WordConverter {
         let rels = read_entry(&mut archive, "word/_rels/document.xml.rels")
             .map(|xml| parse_relationships(&xml))
             .unwrap_or_default();
-        let images = options
-            .image_dir
-            .as_deref()
-            .map(|dir| extract_related_images(&mut archive, "word/", &rels, dir))
+        let images = MediaWriter::from_options(options)
+            .map(|mut media| extract_related_images(&mut archive, "word/", &rels, &mut media))
             .unwrap_or_default();
         let numbering = read_entry(&mut archive, "word/numbering.xml")
             .map(|xml| parse_numbering(&xml))
@@ -697,7 +695,7 @@ mod tests {
         let docx = zip.finish().unwrap().into_inner();
 
         let dir = std::env::temp_dir().join(format!("mq-conv-docx-{}", std::process::id()));
-        let options = ConvertOptions { image_dir: Some(dir.clone()), ocr_lang: None };
+        let options = ConvertOptions { image_dir: Some(dir.clone()), ..Default::default() };
         let mut out = Vec::new();
         WordConverter.convert_with(&docx, &mut out, &options).unwrap();
         let md = String::from_utf8(out).unwrap();

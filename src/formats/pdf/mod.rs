@@ -161,13 +161,14 @@ fn render_page(doc: &Document, p: &Prepared, stats: &DocStats, options: &Convert
     let with_images = options.image_dir.is_some();
     let blocks = layout_page(&p.content, p.words.clone(), stats, with_images);
 
-    if blocks.is_empty() {
-        #[cfg(feature = "ocr")]
-        if let Some(text) = ocr_page(doc, p, options) {
-            return text;
-        }
-        return String::new();
-    }
+    // Image blocks are not text: a scanned page that only yielded images still
+    // needs OCR, and keeps its image links next to the recognised text.
+    #[cfg(feature = "ocr")]
+    let ocr_text = (!blocks.iter().any(|b| !matches!(b, Block::Image(_))))
+        .then(|| ocr_page(doc, p, options))
+        .flatten();
+    #[cfg(not(feature = "ocr"))]
+    let ocr_text: Option<String> = None;
 
     let blocks: Vec<Block> = blocks
         .into_iter()
@@ -183,7 +184,14 @@ fn render_page(doc: &Document, p: &Prepared, stats: &DocStats, options: &Convert
         })
         .filter(|b| !matches!(b, Block::Raw(s) if s.is_empty()))
         .collect();
-    render_blocks(&blocks)
+    let mut out = render_blocks(&blocks);
+    if let Some(text) = ocr_text {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&text);
+    }
+    out
 }
 
 fn save_image(
@@ -194,10 +202,11 @@ fn save_image(
     options: &ConvertOptions,
 ) -> Option<String> {
     let dir = options.image_dir.as_ref()?;
+    let link_dir = options.image_link_dir.as_ref().unwrap_or(dir);
     let img = image::extract(doc, id)?;
     let name = format!("page{page}-img{}.{}", index + 1, img.ext);
     std::fs::write(dir.join(&name), &img.data).ok()?;
-    Some(crate::formats::media::md_path(&dir.join(&name)))
+    Some(crate::formats::media::md_path(&link_dir.join(&name)))
 }
 
 #[cfg(feature = "ocr")]
@@ -253,7 +262,9 @@ fn decode_text_string(bytes: &[u8]) -> String {
     }
 }
 
-/// `D:YYYYMMDDHHmmSS…` → `YYYY-MM-DDTHH:MM:SSZ` (offsets are not applied).
+/// `D:YYYYMMDDHHmmSS…` → `YYYY-MM-DDTHH:MM:SS` plus the zone designator the
+/// PDF gave: `Z` for UTC, `±HH:MM` for an offset (kept, not applied). A date
+/// without a zone has an unknown relationship to UT, so none is emitted.
 fn format_pdf_date(s: &str) -> String {
     let d = s.trim().strip_prefix("D:").unwrap_or(s.trim());
     let digits: String = d.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -262,14 +273,30 @@ fn format_pdf_date(s: &str) -> String {
         return s.to_string();
     }
     format!(
-        "{}-{}-{}T{}:{}:{}Z",
+        "{}-{}-{}T{}:{}:{}{}",
         part(0, 4, "0000"),
         part(4, 6, "01"),
         part(6, 8, "01"),
         part(8, 10, "00"),
         part(10, 12, "00"),
-        part(12, 14, "00")
+        part(12, 14, "00"),
+        pdf_date_zone(&d[digits.len()..])
     )
+}
+
+/// Zone suffix of a PDF date: `Z`, `+HH'mm'`, `-HH'mm'`, `+HH`, `+HH:mm`…
+fn pdf_date_zone(rest: &str) -> String {
+    let mut chars = rest.chars();
+    let sign = match chars.next() {
+        Some('Z' | 'z') => return "Z".to_string(),
+        Some(c @ ('+' | '-')) => c,
+        _ => return String::new(),
+    };
+    let zone: String = chars.filter(char::is_ascii_digit).collect();
+    let (Some(hh), mm) = (zone.get(0..2), zone.get(2..4).unwrap_or("00")) else {
+        return String::new();
+    };
+    format!("{sign}{hh}:{mm}")
 }
 
 fn read_metadata(doc: &Document) -> Metadata {

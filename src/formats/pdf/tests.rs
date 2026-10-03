@@ -129,6 +129,22 @@ fn test_metadata_is_rendered() {
 }
 
 #[test]
+fn test_pdf_date_keeps_the_timezone_offset() {
+    let cases = [
+        ("D:20240102120000Z", "2024-01-02T12:00:00Z"),
+        ("D:20240102120000+05'00'", "2024-01-02T12:00:00+05:00"),
+        ("D:20240102120000-08'30'", "2024-01-02T12:00:00-08:30"),
+        ("D:20240102120000+09'", "2024-01-02T12:00:00+09:00"),
+        ("D:20240102120000+0530", "2024-01-02T12:00:00+05:30"),
+        ("D:20240102120000", "2024-01-02T12:00:00"),
+        ("D:2024", "2024-01-01T00:00:00"),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(format_pdf_date(input), expected, "{input}");
+    }
+}
+
+#[test]
 fn test_no_extractable_text_message() {
     let out = convert(&make_pdf(&[""], "[0 0 300 300]", None));
     assert!(

@@ -5,6 +5,13 @@
 //! A cursor is a byte offset into the converted Markdown. Conversion is
 //! deterministic, so re-running the same command with `--cursor` continues
 //! exactly where the previous chunk ended.
+//!
+//! Blocks are cut at blank lines. A fenced code block or table larger than
+//! the budget is cut between lines instead, and each piece is made valid on
+//! its own: the fence is closed and re-opened, and the table header is
+//! repeated. Table rows are never cut.
+
+use std::borrow::Cow;
 
 /// Rough token estimate: ~4 ASCII characters per token, about one token per
 /// CJK character and half a token for other non-ASCII characters.
@@ -26,7 +33,9 @@ pub fn estimate_tokens(text: &str) -> usize {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chunk<'a> {
-    pub text: &'a str,
+    /// The slice of the document, plus any fence or table header added so the
+    /// chunk is valid Markdown on its own.
+    pub text: Cow<'a, str>,
     /// Estimated tokens in `text`.
     pub tokens: usize,
     /// Offset to pass as `--cursor` for the next chunk, if any text remains.
@@ -88,29 +97,166 @@ fn block_ranges(text: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// Largest prefix of `text` (cut at line, then char boundaries) whose
-/// estimated size is within `max_tokens`; at least one character.
-fn split_oversized(text: &str, max_tokens: usize) -> usize {
-    let mut end = 0usize;
+fn is_fence_line(trimmed: &str) -> bool {
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
+fn is_row_line(trimmed: &str) -> bool {
+    trimmed.starts_with('|')
+}
+
+fn is_delimiter_line(trimmed: &str) -> bool {
+    is_row_line(trimmed)
+        && trimmed.contains('-')
+        && trimmed
+            .chars()
+            .all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+}
+
+fn with_newline(line: &str) -> String {
+    let mut l = line.to_string();
+    if !l.ends_with('\n') {
+        l.push('\n');
+    }
+    l
+}
+
+/// Markdown structure that is open at some point of a document.
+#[derive(Debug, Default, Clone)]
+struct Structure {
+    /// Opening line of the fenced code block we are inside.
+    fence: Option<String>,
+    /// The previous line, if it was a table row (a possible header).
+    prev_row: Option<String>,
+    /// Header and delimiter rows of the table we are inside.
+    table_header: Option<String>,
+    /// Data rows seen in the current table.
+    table_rows: usize,
+}
+
+impl Structure {
+    fn feed(&mut self, line: &str) {
+        let t = line.trim();
+        if self.fence.is_some() {
+            if is_fence_line(t) {
+                self.fence = None;
+            }
+            return;
+        }
+        if is_fence_line(t) {
+            *self = Structure {
+                fence: Some(with_newline(line)),
+                ..Structure::default()
+            };
+            return;
+        }
+        if !is_row_line(t) {
+            self.prev_row = None;
+            self.table_header = None;
+            self.table_rows = 0;
+            return;
+        }
+        if self.table_header.is_some() {
+            self.table_rows += 1;
+            return;
+        }
+        match self.prev_row.take() {
+            Some(prev) if is_delimiter_line(t) => {
+                self.table_header = Some(prev + &with_newline(line));
+                self.table_rows = 0;
+            }
+            _ => self.prev_row = Some(with_newline(line)),
+        }
+    }
+
+    /// Line that closes the open fence, if any.
+    fn closer(&self) -> Option<String> {
+        let opener = self.fence.as_deref()?.trim();
+        let marker = opener.chars().next()?;
+        let run = opener.chars().take_while(|&c| c == marker).count();
+        Some(format!("{}\n", marker.to_string().repeat(run)))
+    }
+
+    /// Text that re-opens the structure for a chunk starting at `rest`.
+    fn reopen(&self, rest: &str) -> String {
+        if let Some(opener) = &self.fence {
+            return opener.clone();
+        }
+        let continues_table = rest.lines().next().is_some_and(|l| is_row_line(l.trim()));
+        match &self.table_header {
+            Some(header) if continues_table => header.clone(),
+            _ => String::new(),
+        }
+    }
+}
+
+/// Structure open at byte offset `cursor` (a line partly before `cursor`
+/// does not count).
+fn structure_at(text: &str, cursor: usize) -> Structure {
+    let mut st = Structure::default();
+    let mut pos = 0usize;
     for line in text.split_inclusive('\n') {
-        if estimate_tokens(&text[..end + line.len()]) > max_tokens {
+        if pos + line.len() > cursor {
             break;
         }
-        end += line.len();
+        st.feed(line);
+        pos += line.len();
     }
-    if end > 0 {
-        return end;
-    }
-    // A single very long line: cut by characters.
+    st
+}
+
+/// Length of the longest prefix of `line` within `budget` tokens, cut at
+/// character boundaries; at least one character.
+fn split_line_by_chars(line: &str, budget: usize) -> usize {
     let mut last = 0usize;
-    for (i, c) in text.char_indices() {
+    for (i, c) in line.char_indices() {
         let next = i + c.len_utf8();
-        if last > 0 && estimate_tokens(&text[..next]) > max_tokens {
+        if last > 0 && estimate_tokens(&line[..next]) > budget {
             break;
         }
         last = next;
     }
-    last.max(text.chars().next().map_or(0, char::len_utf8))
+    last
+}
+
+/// Length of the largest prefix of `block` (cut between lines) that fits in
+/// `budget` tokens, starting in structure `st`. Always makes progress: it
+/// takes at least one line, never leaves a table header without a data row or
+/// a code fence without content, and never cuts a table row. Only a plain
+/// line or a code line longer than the budget is cut by characters.
+fn split_oversized(block: &str, budget: usize, st: &Structure) -> usize {
+    let mut end = 0usize;
+    let mut state = st.clone();
+    // The previous line opened a fence, so nothing has been taken from it yet.
+    let mut at_opener = false;
+    for line in block.split_inclusive('\n') {
+        let mut after = state.clone();
+        after.feed(line);
+        let closer = after.closer().map_or(0, |c| estimate_tokens(&c));
+        let over = estimate_tokens(&block[..end + line.len()]) + closer > budget;
+        if over && end == 0 && !is_row_line(line.trim()) {
+            // A single long line: cut it by characters.
+            return split_line_by_chars(line, budget.saturating_sub(closer));
+        }
+        if over && end > 0 {
+            if at_opener {
+                if !is_fence_line(line.trim()) {
+                    let used = estimate_tokens(&block[..end]) + closer;
+                    return end + split_line_by_chars(line, budget.saturating_sub(used));
+                }
+            } else {
+                let header_incomplete = (state.table_header.is_some() && state.table_rows == 0)
+                    || (state.prev_row.is_some() && is_delimiter_line(line.trim()));
+                if !header_incomplete {
+                    break;
+                }
+            }
+        }
+        at_opener = after.fence.is_some() && state.fence.is_none();
+        end += line.len();
+        state = after;
+    }
+    end
 }
 
 /// Take the next chunk starting at byte offset `cursor`.
@@ -134,31 +280,64 @@ pub fn take_chunk(
     let rest = &text[cursor..];
     let Some(max) = max_tokens.map(|m| m.max(1)) else {
         return Ok(Chunk {
-            text: rest,
+            text: Cow::Borrowed(rest),
             tokens: estimate_tokens(rest),
             next_cursor: None,
             total_tokens,
         });
     };
 
-    let mut end = 0usize;
-    for (s, e) in block_ranges(rest) {
-        if estimate_tokens(&rest[..e]) <= max {
+    // A cursor inside a fence or table starts a chunk that must re-open it.
+    let st = structure_at(text, cursor);
+    let prefix = st.reopen(rest);
+    let prefix_tokens = estimate_tokens(&prefix);
+
+    let mut end = cursor;
+    // Ranges come from the whole text so the fence state is right even when
+    // the cursor is inside a fenced block.
+    for (s, e) in block_ranges(text).into_iter().filter(|&(_, e)| e > cursor) {
+        if prefix_tokens + estimate_tokens(&text[cursor..e]) <= max {
             end = e;
             continue;
         }
-        if end == 0 {
+        if end == cursor {
             // The first block alone is over budget: split it.
-            end = s + split_oversized(&rest[s..e], max);
+            let s = s.max(cursor);
+            end = s + split_oversized(&text[s..e], max.saturating_sub(prefix_tokens), &st);
         }
         break;
     }
 
-    let chunk = &rest[..end];
-    let next = cursor + end;
+    // Close a fence the split left open, unless only its closing line is left.
+    let mut suffix = String::new();
+    let open = structure_at(text, end);
+    if let Some(closer) = open.closer() {
+        let line_end = text[end..].find('\n').map(|i| end + i + 1);
+        let at_line_start = end == 0 || text.as_bytes()[end - 1] == b'\n';
+        match line_end {
+            Some(le) if at_line_start && is_fence_line(text[end..le].trim()) => end = le,
+            _ => suffix = closer,
+        }
+    }
+
+    let body = &text[cursor..end];
+    let chunk = if prefix.is_empty() && suffix.is_empty() {
+        Cow::Borrowed(body)
+    } else {
+        let mut out = prefix;
+        out.push_str(body);
+        if !suffix.is_empty() {
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&suffix);
+        }
+        Cow::Owned(out)
+    };
+    let next = end;
     Ok(Chunk {
+        tokens: estimate_tokens(&chunk),
         text: chunk,
-        tokens: estimate_tokens(chunk),
         next_cursor: (next < text.len() && !text[next..].trim().is_empty()).then_some(next),
         total_tokens,
     })
@@ -201,7 +380,7 @@ mod tests {
         let mut out = String::new();
         loop {
             let c = take_chunk(doc, cursor, Some(6)).unwrap();
-            out.push_str(c.text);
+            out.push_str(&c.text);
             match c.next_cursor {
                 Some(n) => cursor = n,
                 None => break,
@@ -243,6 +422,108 @@ mod tests {
         assert_eq!(
             take_chunk("日", 1, None),
             Err(CursorError::NotCharBoundary(1))
+        );
+    }
+
+    /// All chunks of `doc` for a budget, following the cursors.
+    fn all_chunks(doc: &str, budget: usize) -> Vec<String> {
+        let mut cursor = 0;
+        let mut out = Vec::new();
+        loop {
+            let c = take_chunk(doc, cursor, Some(budget)).unwrap();
+            assert!(c.next_cursor.is_none_or(|n| n > cursor), "no progress");
+            out.push(c.text.into_owned());
+            match c.next_cursor {
+                Some(n) => cursor = n,
+                None => return out,
+            }
+        }
+    }
+
+    fn fence_lines(chunk: &str) -> usize {
+        chunk.lines().filter(|l| l.trim() == "```").count()
+    }
+
+    #[test]
+    fn oversized_code_block_chunks_stay_fenced() {
+        let code: Vec<String> = (0..40).map(|i| format!("let value_{i} = {i};")).collect();
+        let doc = format!("intro\n\n```rust\n{}\n```\n\nend\n", code.join("\n"));
+        let chunks = all_chunks(&doc, 20);
+        assert!(chunks.len() > 3, "{chunks:?}");
+        let mut seen = Vec::new();
+        for chunk in &chunks {
+            let opens = chunk.lines().filter(|l| l.starts_with("```rust")).count();
+            let closes = fence_lines(chunk);
+            assert_eq!(opens, closes, "unbalanced fences in:\n{chunk}");
+            seen.extend(
+                chunk
+                    .lines()
+                    .filter(|l| l.starts_with("let value_"))
+                    .map(String::from),
+            );
+        }
+        assert_eq!(seen, code, "code lines lost or duplicated");
+    }
+
+    #[test]
+    fn closing_fence_alone_is_not_a_chunk() {
+        let doc = "```\naaaa aaaa\nbbbb bbbb\n```\n";
+        for chunk in all_chunks(doc, 4) {
+            assert!(
+                chunk.lines().any(|l| l != "```"),
+                "empty code block chunk: {chunk:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_table_repeats_the_header_and_keeps_rows_whole() {
+        let rows: Vec<String> = (0..30).map(|i| format!("| row{i} | value{i} |")).collect();
+        let doc = format!("| Name | Value |\n| --- | --- |\n{}\n", rows.join("\n"));
+        let chunks = all_chunks(&doc, 25);
+        assert!(chunks.len() > 3, "{chunks:?}");
+        let mut seen = Vec::new();
+        for chunk in &chunks {
+            let mut lines = chunk.lines();
+            assert_eq!(lines.next(), Some("| Name | Value |"), "{chunk}");
+            assert_eq!(lines.next(), Some("| --- | --- |"), "{chunk}");
+            for row in lines {
+                assert!(
+                    row.starts_with("| row") && row.ends_with(" |"),
+                    "cut row: {row}"
+                );
+                seen.push(row.to_string());
+            }
+        }
+        assert_eq!(seen, rows);
+    }
+
+    #[test]
+    fn table_header_is_never_separated_from_its_first_row() {
+        let doc =
+            "| A very long header cell | Another long header cell |\n| --- | --- |\n| x | y |\n";
+        let chunks = all_chunks(doc, 3);
+        assert!(chunks[0].contains("| x | y |"), "{chunks:?}");
+    }
+
+    #[test]
+    fn oversized_table_row_is_not_cut() {
+        let long = "x".repeat(200);
+        let doc = format!("| H |\n| --- |\n| {long} |\n| short |\n");
+        let chunks = all_chunks(&doc, 10);
+        assert!(
+            chunks.iter().any(|c| c.contains(&format!("| {long} |"))),
+            "{chunks:?}"
+        );
+    }
+
+    #[test]
+    fn text_after_a_table_gets_no_header() {
+        let doc = "| H |\n| --- |\n| a |\n\nafter the table\n";
+        let chunks = all_chunks(doc, 6);
+        assert!(
+            chunks.iter().any(|c| c.starts_with("after")),
+            "header leaked into trailing text: {chunks:?}"
         );
     }
 }

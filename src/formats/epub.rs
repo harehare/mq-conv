@@ -24,10 +24,7 @@ impl Converter for EpubConverter {
         writer: &mut dyn Write,
         options: &ConvertOptions,
     ) -> Result<()> {
-        let mut media = options
-            .image_dir
-            .as_deref()
-            .and_then(|dir| MediaWriter::new(dir).ok());
+        let mut media = MediaWriter::from_options(options);
         let cursor = Cursor::new(input);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|e| Error::Conversion {
             format: "epub",

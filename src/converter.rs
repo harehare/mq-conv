@@ -16,7 +16,7 @@ pub struct ConvertOptions {
     pub image_link_dir: Option<PathBuf>,
     /// Tesseract language used for OCR fallbacks (default "eng").
     pub ocr_lang: Option<String>,
-    /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets).
+    /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets, EPUB chapters).
     /// Numbers in the output stay those of the source document.
     pub pages: Option<PageRanges>,
 }
@@ -30,8 +30,10 @@ impl ConvertOptions {
     /// Fail when `--pages` is set but matches none of `total` pages. `unit`
     /// names what the format calls a page ("page", "slide", "sheet").
     pub fn check_pages(&self, format: &'static str, unit: &str, total: usize) -> Result<()> {
-        let any = (1..=total).any(|n| self.is_selected(n as u32));
-        if any {
+        let Some(pages) = &self.pages else {
+            return Ok(());
+        };
+        if (1..=total).any(|n| pages.contains(n as u32)) {
             return Ok(());
         }
         Err(Error::Conversion {
@@ -132,6 +134,25 @@ mod tests {
         assert_eq!(hits, vec![1, 3, 4, 7, 8, 9]);
         assert!(pages("-2").contains(1) && pages("-2").contains(2) && !pages("-2").contains(3));
         assert!(pages("5").contains(5) && !pages("5").contains(4));
+    }
+
+    #[test]
+    fn check_pages_only_complains_when_a_selection_matches_nothing() {
+        let none = ConvertOptions::default();
+        assert!(none.check_pages("pdf", "page", 0).is_ok());
+        assert!(none.check_pages("pdf", "page", 3).is_ok());
+
+        let some = ConvertOptions {
+            pages: Some(pages("2-3")),
+            ..Default::default()
+        };
+        assert!(some.check_pages("pdf", "page", 3).is_ok());
+        let err = some.check_pages("pdf", "page", 1).unwrap_err().to_string();
+        assert!(
+            err.contains("no page matches --pages (the document has 1 pages)"),
+            "{err}"
+        );
+        assert!(some.check_pages("pdf", "page", 0).is_err());
     }
 
     #[test]

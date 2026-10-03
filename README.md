@@ -32,7 +32,7 @@ Most "convert to Markdown" tools either dump raw text or call out to a cloud LLM
 - **Parallel** — PDF pages and input files are converted on all cores; a broken page never takes the rest of the document down
 - **Token Budgeting** — `--max-tokens` / `--cursor` page through large documents at block boundaries
 - **Built-in mq Queries** — `-q` runs an [mq](https://github.com/harehare/mq) query over the converted Markdown, with `tokens()`, `format()` and `filename()` helpers
-- **Page Selection** — `--pages 3-5` converts only those PDF pages, PowerPoint slides or Excel sheets, keeping the original numbers
+- **Page Selection** — `--pages 3-5` converts only those PDF pages, PowerPoint slides, Excel sheets or EPUB chapters, keeping the original numbers
 - **Embedded Images** — `--extract-images` writes images from PDF, Word, PowerPoint and EPUB and links them from the Markdown
 - **Hyperlink Preservation** — Word links survive as `[text](url)`
 - **Automatic Format Detection** — by extension and magic bytes
@@ -107,9 +107,10 @@ mq-conv report.pdf --extract-images ./img
 mq-conv report.pdf --pages 3-5
 mq-conv report.pdf --pages 1,4-6,9-
 
-# The same for PowerPoint slides and Excel sheets (numbered by position)
+# The same for PowerPoint slides, Excel sheets and EPUB chapters
 mq-conv deck.pptx --pages 2-4
 mq-conv budget.xlsx --pages 1
+mq-conv novel.epub --pages 3
 
 # Print only what an mq query selects
 mq-conv report.pdf -q '.h2'
@@ -140,9 +141,9 @@ mq-conv manual.pdf -q '.h2 | select(tokens(.) < 500)'
 
 A query runs once per top-level node, as in `mq`. The `query` feature is enabled by default; it adds about 2.4 MB to the release binary, so build with `--no-default-features` and pick the formats you need to leave it out. It is not part of the WebAssembly builds.
 
-`--pages` takes numbers and ranges (`3`, `2-5`, `7-`, `-4`, `1,4-6`) and works on PDF pages, PowerPoint slides and Excel sheets; other inputs reject it. Numbers stay those of the source: PDF page markers, `# Slide N` headings and sheet positions do not shift when others are skipped. A selection that matches nothing is an error.
+`--pages` takes numbers and ranges (`3`, `2-5`, `7-`, `-4`, `1,4-6`) and works on PDF pages, PowerPoint slides, Excel sheets and EPUB chapters; other inputs reject it. Slides and sheets are numbered by position, and EPUB chapters in reading order, counting only chapters that have text (the sections separated by `---` in the output). Numbers stay those of the source: PDF page markers, `# Slide N` headings and positions do not shift when others are skipped. A selection that matches nothing is an error.
 
-For PDFs the whole document is still analysed, so heading levels and running-header removal match a full conversion, and only the selected pages are rendered, which is what saves time on OCR and image extraction. Excel sheets and PowerPoint slides that are not selected are never read.
+For PDFs the whole document is still analysed, so heading levels and running-header removal match a full conversion, and only the selected pages are rendered, which is what saves time on OCR and image extraction. Excel sheets, PowerPoint slides and EPUB chapters that are not selected are never read or extracted (EPUB chapters are still parsed to number them, but their images are not).
 
 ### Combine with mq
 
@@ -248,7 +249,7 @@ Options:
       --to <TO>                  Target output format when converting from Markdown
       --ocr-lang <OCR_LANG>      Tesseract language for OCR, e.g. "jpn" or "eng+jpn" [default: eng]
   -q, --query <QUERY>            Run an mq query over the converted Markdown and print its result
-      --pages <PAGES>            Convert only these PDF pages, PowerPoint slides or Excel sheets, e.g. "3", "2-5", "7-" or "1,4-6"
+      --pages <PAGES>            Convert only these PDF pages, slides, sheets or EPUB chapters, e.g. "3", "2-5", "7-" or "1,4-6"
       --extract-images <DIR>     Extract embedded images (PDF, DOCX, PPTX, EPUB) into DIR and link them
       --max-tokens <N>           Emit at most ~N tokens, cut at block boundaries (single input)
       --cursor <OFFSET>          Resume from the cursor printed by a previous --max-tokens run [default: 0]

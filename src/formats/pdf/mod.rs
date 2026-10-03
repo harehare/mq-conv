@@ -70,6 +70,17 @@ impl Converter for PdfConverter {
         let pages: Vec<(u32, ObjectId)> = doc.get_pages().into_iter().collect();
         let fonts: FontCache = Default::default();
 
+        // `--pages` limits what is rendered, not what is analysed: heading
+        // levels and running headers come from statistics over the whole
+        // document, so a page converts the same with or without the option.
+        let selected = |number: u32| options.pages.as_ref().is_none_or(|p| p.contains(number));
+        if !pages.iter().any(|&(n, _)| selected(n)) {
+            return Err(err(format!(
+                "no page matches --pages (the document has {} pages)",
+                pages.len()
+            )));
+        }
+
         // Phase 1: per-page extraction (parallel, failures isolated per page).
         let prepared: Vec<Option<Prepared>> = par_map(&pages, |&(number, id)| {
             let content = extract_page(&doc, id, &fonts);
@@ -111,11 +122,9 @@ impl Converter for PdfConverter {
             edge_texts,
         };
 
-        let any_text = prepared.iter().flatten().any(|p| !p.words.is_empty());
-        let any_image = prepared
-            .iter()
-            .flatten()
-            .any(|p| !p.content.images.is_empty());
+        let wanted = || prepared.iter().flatten().filter(|p| selected(p.number));
+        let any_text = wanted().any(|p| !p.words.is_empty());
+        let any_image = wanted().any(|p| !p.content.images.is_empty());
         if !any_text && !(any_image && cfg!(feature = "ocr")) {
             writeln!(
                 writer,
@@ -130,12 +139,15 @@ impl Converter for PdfConverter {
             std::fs::create_dir_all(dir)?;
         }
         let rendered: Vec<Option<String>> = par_map(&prepared, |p| match p {
-            None => String::new(),
-            Some(p) => render_page(&doc, p, &stats, options),
+            Some(p) if selected(p.number) => render_page(&doc, p, &stats, options),
+            _ => String::new(),
         });
 
         let mut markdown = String::new();
         for (i, (page, text)) in pages.iter().zip(rendered).enumerate() {
+            if !selected(page.0) {
+                continue;
+            }
             if !markdown.is_empty() {
                 markdown.push('\n');
             }

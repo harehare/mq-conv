@@ -104,3 +104,105 @@ fn output_dir_markdown_links_images_relative_to_itself() {
     assert!(md.contains("![image](img/image1.png)"), "{md}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+const HTML: &str = "<h1>Guide</h1><p>Intro text.</p><h2>Usage</h2><p>Run it.</p>\
+<h2>Install</h2><p>Cargo.</p>";
+
+fn html_dir(name: &str) -> PathBuf {
+    let dir = scratch(name);
+    std::fs::write(dir.join("guide.html"), HTML).unwrap();
+    dir
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+#[test]
+fn query_prints_only_the_matching_nodes() {
+    let dir = html_dir("query");
+    let all = run(&dir, &["guide.html"]);
+    assert!(stdout(&all).contains("Intro text."));
+
+    let out = run(&dir, &["guide.html", "-q", ".h2"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "## Usage\n\n## Install\n");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn query_functions_know_the_input() {
+    let dir = html_dir("query-fns");
+    // The query runs once per top-level node, so the line repeats.
+    let out = run(&dir, &["guide.html", "-q", r#"format() + " " + filename()"#]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(!text.is_empty());
+    assert!(text.lines().all(|l| l == "html guide.html"), "{text}");
+
+    let out = run(&dir, &["guide.html", "-q", ".h2 | select(tokens(.) > 100)"]);
+    assert_eq!(stdout(&out), "");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn query_runs_per_file_and_before_the_token_budget() {
+    let dir = html_dir("query-multi");
+    std::fs::write(dir.join("other.html"), "<h1>Other</h1>").unwrap();
+    let out = run(&dir, &["guide.html", "other.html", "-q", ".h1"]);
+    assert_eq!(stdout(&out), "# Guide\n\n---\n\n# Other\n");
+
+    let out = run(&dir, &["guide.html", "-q", ".h2", "--max-tokens", "3"]);
+    let text = stdout(&out);
+    assert!(text.starts_with("## Usage"), "{text}");
+    assert!(text.contains("next-cursor="), "{text}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn query_errors_are_reported() {
+    let dir = html_dir("query-err");
+    let bad = run(&dir, &["guide.html", "-q", "select("]);
+    assert!(!bad.status.success());
+
+    std::fs::write(dir.join("notes.md"), "# Notes\n").unwrap();
+    let with_to = run(&dir, &["notes.md", "--to", "html", "-q", ".h1"]);
+    assert!(stderr(&with_to).contains("--to"), "{}", stderr(&with_to));
+    let md_input = run(&dir, &["notes.md", "-q", ".h1"]);
+    assert!(!md_input.status.success());
+    assert!(stderr(&md_input).contains("Markdown output"), "{}", stderr(&md_input));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn pages_is_rejected_for_non_pdf_input() {
+    let dir = html_dir("pages");
+    let out = run(&dir, &["guide.html", "--pages", "1"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("PDF"), "{}", stderr(&out));
+
+    let bad = run(&dir, &["guide.html", "--pages", "3-1"]);
+    assert!(!bad.status.success());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn pages_selects_pdf_pages_through_the_cli() {
+    let dir = scratch("pdf-pages");
+    let pdf = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pdf/sample_ja.pdf"))
+        .unwrap();
+    std::fs::write(dir.join("a.pdf"), pdf).unwrap();
+
+    let first = run(&dir, &["a.pdf", "--pages", "1"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(stdout(&first).contains("<!-- page 1 -->"));
+
+    let none = run(&dir, &["a.pdf", "--pages", "50"]);
+    assert!(!none.status.success());
+    assert!(stderr(&none).contains("no page matches"), "{}", stderr(&none));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

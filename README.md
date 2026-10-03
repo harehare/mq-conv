@@ -31,6 +31,8 @@ Most "convert to Markdown" tools either dump raw text or call out to a cloud LLM
 - **Layout-Aware PDF Parsing** — a native glyph-position parser (no PDF-to-text library): multi-column reading order, headings, lists, ruled and borderless tables, links, CJK fonts; strips repeated headers/footers/page numbers
 - **Parallel** — PDF pages and input files are converted on all cores; a broken page never takes the rest of the document down
 - **Token Budgeting** — `--max-tokens` / `--cursor` page through large documents at block boundaries
+- **Built-in mq Queries** — `-q` runs an [mq](https://github.com/harehare/mq) query over the converted Markdown, with `tokens()`, `format()` and `filename()` helpers
+- **Page Selection** — `--pages 3-5` converts only those PDF pages, keeping the original page numbers
 - **Embedded Images** — `--extract-images` writes images from PDF, Word, PowerPoint and EPUB and links them from the Markdown
 - **Hyperlink Preservation** — Word links survive as `[text](url)`
 - **Automatic Format Detection** — by extension and magic bytes
@@ -101,6 +103,14 @@ mq-conv reports/*.pdf notes/*.docx --output-dir ./out
 # Keep embedded images: written to ./img and linked as ![image](img/...)
 mq-conv report.pdf --extract-images ./img
 
+# Convert only some PDF pages (numbers in <!-- page N --> markers stay the same)
+mq-conv report.pdf --pages 3-5
+mq-conv report.pdf --pages 1,4-6,9-
+
+# Print only what an mq query selects
+mq-conv report.pdf -q '.h2'
+mq-conv report.pdf -q '.h2 | select(contains("Results"))'
+
 # Page through a large document ~4000 tokens at a time
 mq-conv book.pdf --max-tokens 4000
 # ...ends with: <!-- mq-conv: next-cursor=18342 chunk-tokens=3921 total-tokens=187450 -->
@@ -108,6 +118,25 @@ mq-conv book.pdf --max-tokens 4000 --cursor 18342
 ```
 
 `--max-tokens` cuts at block boundaries (paragraphs, tables and code blocks stay whole) using a built-in estimate (about 4 ASCII characters, or one CJK character, per token). A cursor is a byte offset into the converted Markdown; conversion is deterministic, so the same command with `--cursor` resumes exactly where the previous chunk stopped. Both options take a single input.
+
+### Queries
+
+`-q/--query` runs an mq query over the converted Markdown and prints the result instead of the whole document. With several inputs the query runs on each file, and with `--max-tokens` the query result is what gets paged. It needs Markdown output, so it cannot be combined with `--to`. mq-conv adds three functions to the standard mq ones:
+
+| Function | Returns |
+| --- | --- |
+| `tokens(x)` | estimated token count of a node or string, the same estimate `--max-tokens` uses |
+| `format()` | the detected input format (`"pdf"`, `"word"`, …) |
+| `filename()` | the input file name, or `None` when reading stdin |
+
+```bash
+# Sections small enough to paste into a prompt
+mq-conv manual.pdf -q '.h2 | select(tokens(.) < 500)'
+```
+
+A query runs once per top-level node, as in `mq`. The `query` feature is enabled by default; it adds about 2.4 MB to the release binary, so build with `--no-default-features` and pick the formats you need to leave it out. It is not part of the WebAssembly builds.
+
+`--pages` takes numbers and ranges (`3`, `2-5`, `7-`, `-4`, `1,4-6`) and is PDF-only. The whole document is still analysed, so heading levels and running-header removal match a full conversion; only the selected pages are rendered, which is what saves time on OCR and image extraction.
 
 ### Combine with mq
 
@@ -212,6 +241,8 @@ Options:
   -o, --output-dir <OUTPUT_DIR>  Output directory for individual output files (one per input file)
       --to <TO>                  Target output format when converting from Markdown
       --ocr-lang <OCR_LANG>      Tesseract language for OCR, e.g. "jpn" or "eng+jpn" [default: eng]
+  -q, --query <QUERY>            Run an mq query over the converted Markdown and print its result
+      --pages <PAGES>            Convert only these PDF pages, e.g. "3", "2-5", "7-" or "1,4-6"
       --extract-images <DIR>     Extract embedded images (PDF, DOCX, PPTX, EPUB) into DIR and link them
       --max-tokens <N>           Emit at most ~N tokens, cut at block boundaries (single input)
       --cursor <OFFSET>          Resume from the cursor printed by a previous --max-tokens run [default: 0]

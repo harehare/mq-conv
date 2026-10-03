@@ -6,7 +6,7 @@ use clap::{Parser, ValueEnum};
 use miette::IntoDiagnostic;
 
 use mq_conv::budget;
-use mq_conv::converter::ConvertOptions;
+use mq_conv::converter::{ConvertOptions, PageRanges};
 use mq_conv::detect::Format;
 use mq_conv::formats::media::relative_path;
 use mq_conv::parallel::par_map;
@@ -29,6 +29,18 @@ struct Args {
     /// Target output format when converting from Markdown
     #[arg(long)]
     to: Option<ToArg>,
+
+    /// Run an mq query over the converted Markdown and print its result
+    /// instead of the whole document. `tokens(x)`, `format()` and
+    /// `filename()` are available besides the standard mq functions.
+    #[cfg(feature = "query")]
+    #[arg(short = 'q', long, value_name = "QUERY")]
+    query: Option<String>,
+
+    /// Convert only these pages of a PDF, e.g. "3", "2-5", "7-" or "1,4-6".
+    /// Page markers in the output keep the original page numbers.
+    #[arg(long, value_name = "PAGES")]
+    pages: Option<PageRanges>,
 
     /// Tesseract language for OCR, e.g. "jpn" or "eng+jpn" (requires the
     /// matching tesseract-ocr language pack to be installed)
@@ -188,6 +200,9 @@ fn convert_bytes(
             miette::miette!("Could not detect file format. Use --format to specify.")
         })?
     };
+    if args.pages.is_some() && detected != Format::Pdf {
+        return Err(miette::miette!("--pages is only valid for PDF input"));
+    }
     let format = resolve_output_format(detected, args.to.as_ref())?;
     let converter =
         resolve_converter(format, &args.ocr_lang).map_err(|e| miette::miette!("{e}"))?;
@@ -196,16 +211,43 @@ fn convert_bytes(
         image_dir,
         image_link_dir,
         ocr_lang: Some(args.ocr_lang.clone()),
+        pages: args.pages.clone(),
     };
     let mut bytes = Vec::new();
     converter
         .convert_with(input, &mut bytes, &options)
         .map_err(|e| miette::miette!("{e}"))?;
+    #[cfg(feature = "query")]
+    if let Some(query) = args.query.as_deref() {
+        if converter.output_extension() != "md" {
+            return Err(miette::miette!(
+                "--query needs Markdown output, but this input is converted to .{}",
+                converter.output_extension()
+            ));
+        }
+        bytes = apply_query(query, bytes, detected, filename)?;
+    }
     Ok(Converted {
         bytes,
         extension: converter.output_extension(),
         is_text: converter.is_text_output(),
     })
+}
+
+/// Replace converted Markdown by the result of an mq query over it.
+#[cfg(feature = "query")]
+fn apply_query(
+    query: &str,
+    markdown: Vec<u8>,
+    detected: Format,
+    filename: Option<&str>,
+) -> miette::Result<Vec<u8>> {
+    let markdown = String::from_utf8(markdown).into_diagnostic()?;
+    let ctx = mq_conv::query::QueryContext {
+        format: Some(detected.to_string()),
+        filename: filename.map(str::to_string),
+    };
+    Ok(mq_conv::query::run(query, &markdown, &ctx)?.into_bytes())
 }
 
 /// Apply `--cursor` / `--max-tokens` to a finished conversion.
@@ -284,6 +326,12 @@ fn main() -> miette::Result<()> {
         return Err(miette::miette!(
             "--max-tokens and --cursor work on a single input; got {} files",
             args.files.len()
+        ));
+    }
+    #[cfg(feature = "query")]
+    if args.query.is_some() && args.to.is_some() {
+        return Err(miette::miette!(
+            "--query works on Markdown output and cannot be combined with --to"
         ));
     }
     if args.max_tokens.is_some() && args.output_dir.is_some() {

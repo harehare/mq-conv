@@ -411,3 +411,56 @@ fn test_link_annotation_becomes_markdown_link() {
     let out = convert(pdf.as_bytes());
     assert!(out.contains("](https://example.com/)"), "{out}");
 }
+
+fn three_pages() -> Vec<u8> {
+    let page = |body: &str| text("F1", 10, 20, 220, body);
+    let (a, b, c) = (
+        page("Alpha findings."),
+        page("Bravo findings."),
+        page("Charlie findings."),
+    );
+    make_pdf(&[&a, &b, &c], "[0 0 300 300]", None)
+}
+
+fn convert_pages(input: &[u8], pages: &str) -> Result<String> {
+    let options = ConvertOptions {
+        pages: Some(pages.parse().unwrap()),
+        ..Default::default()
+    };
+    let mut out = Vec::new();
+    PdfConverter.convert_with(input, &mut out, &options)?;
+    Ok(String::from_utf8(out).unwrap())
+}
+
+#[test]
+fn test_pages_option_selects_pages_and_keeps_numbers() {
+    let pdf = three_pages();
+    let out = convert_pages(&pdf, "2").unwrap();
+    assert!(out.contains("<!-- page 2 -->") && out.contains("Bravo findings."), "{out}");
+    assert!(!out.contains("page 1") && !out.contains("Alpha"), "{out}");
+    assert!(!out.contains("page 3") && !out.contains("Charlie"), "{out}");
+
+    let out = convert_pages(&pdf, "1,3").unwrap();
+    assert!(out.contains("Alpha") && out.contains("Charlie") && !out.contains("Bravo"), "{out}");
+    assert!(out.contains("<!-- page 3 -->"), "{out}");
+}
+
+#[test]
+fn test_selected_page_matches_the_full_conversion() {
+    let page = |body: &str| text("F1", 10, 20, 220, body);
+    let big = text("F1", 24, 20, 250, "Chapter Title") + &page("Body text of page two.");
+    let (a, b) = (page("Intro paragraph one."), big);
+    let pdf = make_pdf(&[&a, &b], "[0 0 300 300]", None);
+
+    let full = convert(&pdf);
+    let only = convert_pages(&pdf, "2").unwrap();
+    let section = |s: &str| s[s.find("<!-- page 2 -->").unwrap()..].to_string();
+    assert_eq!(section(&full), section(&only));
+}
+
+#[test]
+fn test_pages_option_outside_the_document_is_an_error() {
+    let pdf = three_pages();
+    let err = convert_pages(&pdf, "9-").unwrap_err().to_string();
+    assert!(err.contains("no page matches"), "{err}");
+}

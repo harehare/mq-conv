@@ -1,6 +1,7 @@
 use crate::error::Result;
 use std::io::Write;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 /// Options shared by converters that support them; converters ignore the
 /// fields they do not use.
@@ -15,6 +16,56 @@ pub struct ConvertOptions {
     pub image_link_dir: Option<PathBuf>,
     /// Tesseract language used for OCR fallbacks (default "eng").
     pub ocr_lang: Option<String>,
+    /// Convert only these pages (PDF). Page numbers in the output stay those
+    /// of the source document.
+    pub pages: Option<PageRanges>,
+}
+
+/// A set of 1-based page numbers, written like `3`, `2-5`, `7-` or `1,4-6`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageRanges(Vec<(u32, u32)>);
+
+impl PageRanges {
+    pub fn contains(&self, page: u32) -> bool {
+        self.0.iter().any(|&(lo, hi)| (lo..=hi).contains(&page))
+    }
+}
+
+impl FromStr for PageRanges {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        let page = |t: &str| {
+            t.trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|&n| n > 0)
+                .ok_or_else(|| format!("invalid page number '{}'", t.trim()))
+        };
+        let mut ranges = Vec::new();
+        for part in s.split(',') {
+            let part = part.trim();
+            let range = match part.split_once('-') {
+                None => {
+                    let n = page(part)?;
+                    (n, n)
+                }
+                Some((lo, hi)) => {
+                    if lo.trim().is_empty() && hi.trim().is_empty() {
+                        return Err("page range '-' needs a start or an end".to_string());
+                    }
+                    let lo = if lo.trim().is_empty() { 1 } else { page(lo)? };
+                    let hi = if hi.trim().is_empty() { u32::MAX } else { page(hi)? };
+                    if lo > hi {
+                        return Err(format!("page range '{part}' is backwards"));
+                    }
+                    (lo, hi)
+                }
+            };
+            ranges.push(range);
+        }
+        Ok(Self(ranges))
+    }
 }
 
 pub trait Converter {
@@ -39,5 +90,30 @@ pub trait Converter {
     /// go through text-oriented post-processing such as token budgeting.
     fn is_text_output(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pages(s: &str) -> PageRanges {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn parses_pages_and_ranges() {
+        let p = pages("1,3-4, 7-");
+        let hits: Vec<u32> = (1..=9).filter(|&n| p.contains(n)).collect();
+        assert_eq!(hits, vec![1, 3, 4, 7, 8, 9]);
+        assert!(pages("-2").contains(1) && pages("-2").contains(2) && !pages("-2").contains(3));
+        assert!(pages("5").contains(5) && !pages("5").contains(4));
+    }
+
+    #[test]
+    fn rejects_bad_page_specs() {
+        for bad in ["", "0", "a", "3-1", "1,,2", "1-2-3", "-"] {
+            assert!(bad.parse::<PageRanges>().is_err(), "{bad:?} was accepted");
+        }
     }
 }

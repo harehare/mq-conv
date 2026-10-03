@@ -234,7 +234,10 @@ fn split_oversized(block: &str, budget: usize, st: &Structure) -> usize {
         after.feed(line);
         let closer = after.closer().map_or(0, |c| estimate_tokens(&c));
         let over = estimate_tokens(&block[..end + line.len()]) + closer > budget;
-        if over && end == 0 && !is_row_line(line.trim()) {
+        // Fence lines are atomic: a cut marker or language tag would not be
+        // recognised as a fence, leaving the next chunk inside a broken opener.
+        // The code after the opener is what gets cut by characters.
+        if over && end == 0 && !is_row_line(line.trim()) && !is_fence_line(line.trim()) {
             // A single long line: cut it by characters.
             return split_line_by_chars(line, budget.saturating_sub(closer));
         }
@@ -463,6 +466,23 @@ mod tests {
             );
         }
         assert_eq!(seen, code, "code lines lost or duplicated");
+    }
+
+    #[test]
+    fn fence_opener_over_budget_is_never_cut() {
+        let doc = "```rust\nabc\n```\n";
+        for budget in 1..=6 {
+            let chunks = all_chunks(doc, budget);
+            let mut code = String::new();
+            for chunk in &chunks {
+                let lines: Vec<&str> = chunk.lines().collect();
+                assert_eq!(lines.first(), Some(&"```rust"), "budget {budget}: {chunk:?}");
+                assert_eq!(lines.last(), Some(&"```"), "budget {budget}: {chunk:?}");
+                assert!(lines.len() > 2, "budget {budget}: empty block {chunk:?}");
+                code.push_str(&lines[1..lines.len() - 1].concat());
+            }
+            assert_eq!(code, "abc", "budget {budget}: {chunks:?}");
+        }
     }
 
     #[test]

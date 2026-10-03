@@ -3,7 +3,8 @@ use std::io::{Cursor, Read, Write};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::converter::Converter;
+use crate::converter::{ConvertOptions, Converter};
+use crate::formats::media::{MediaWriter, is_image_name, resolve_archive_path};
 use crate::error::{Error, Result};
 
 pub struct EpubConverter;
@@ -14,6 +15,16 @@ impl Converter for EpubConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
+        self.convert_with(input, writer, &ConvertOptions::default())
+    }
+
+    fn convert_with(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        options: &ConvertOptions,
+    ) -> Result<()> {
+        let mut media = MediaWriter::from_options(options);
         let cursor = Cursor::new(input);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|e| Error::Conversion {
             format: "epub",
@@ -33,6 +44,25 @@ impl Converter for EpubConverter {
         } else {
             ""
         };
+
+        // Chapters are the spine items that yield text, numbered in reading
+        // order. Numbering comes from the text alone (never from image
+        // extraction), so a chapter keeps its number under any option.
+        let mut chapters: Vec<(String, String)> = Vec::new();
+        for item_path in &spine_items {
+            let full_path = if let Some(stripped) = item_path.strip_prefix('/') {
+                stripped.to_string()
+            } else {
+                format!("{opf_dir}{item_path}")
+            };
+            if let Ok(html_content) = read_entry(&mut archive, &full_path) {
+                let text = html_to_markdown(&html_content);
+                if !text.trim().is_empty() {
+                    chapters.push((full_path, text));
+                }
+            }
+        }
+        options.check_pages("epub", "chapter", chapters.len())?;
 
         // Write metadata
         if let Some(title) = &metadata.title {
@@ -62,33 +92,74 @@ impl Converter for EpubConverter {
         writeln!(writer)?;
         writeln!(writer, "---")?;
 
-        // Process spine items (chapters)
-        let mut chapter_num = 0;
-        for item_path in &spine_items {
-            let full_path = if let Some(stripped) = item_path.strip_prefix('/') {
-                stripped.to_string()
-            } else {
-                format!("{opf_dir}{item_path}")
-            };
-
-            if let Ok(html_content) = read_entry(&mut archive, &full_path) {
-                let text = html_to_markdown(&html_content);
-                let text = text.trim();
-                if !text.is_empty() {
-                    chapter_num += 1;
-
-                    if chapter_num > 1 {
-                        writeln!(writer)?;
-                        writeln!(writer, "---")?;
-                    }
-                    writeln!(writer)?;
-                    writeln!(writer, "{text}")?;
-                }
+        let mut first_written = true;
+        for (idx, (full_path, text)) in chapters.iter().enumerate() {
+            // Unselected chapters are skipped before any image is extracted.
+            if !options.is_selected(idx as u32 + 1) {
+                continue;
             }
+            let text = match media.as_mut() {
+                Some(m) => {
+                    let chapter_dir = full_path.rsplit_once('/').map_or("", |(d, _)| d);
+                    extract_markdown_images(text, chapter_dir, &mut archive, m)
+                }
+                None => text.clone(),
+            };
+            if !std::mem::take(&mut first_written) {
+                writeln!(writer)?;
+                writeln!(writer, "---")?;
+            }
+            writeln!(writer)?;
+            writeln!(writer, "{}", text.trim())?;
         }
 
         Ok(())
     }
+}
+
+/// Copy images referenced by `![alt](relative/path)` out of the archive and
+/// point the links at the extracted files.
+fn extract_markdown_images(
+    markdown: &str,
+    chapter_dir: &str,
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    media: &mut MediaWriter,
+) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut rest = markdown;
+    while let Some(start) = rest.find("![") {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let Some(close) = tail.find("](") else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let after = &tail[close + 2..];
+        let Some(end) = after.find(')') else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let target = after[..end].trim();
+        let target_path = target.split(['#', '?']).next().unwrap_or(target);
+        let mut replaced = None;
+        if is_image_name(target_path) && !target_path.contains("://") && !target_path.starts_with("data:") {
+            let full = resolve_archive_path(chapter_dir, target_path);
+            if let Ok(mut file) = archive.by_name(&full) {
+                let mut data = Vec::new();
+                if file.read_to_end(&mut data).is_ok() {
+                    replaced = media.save(&full, &data);
+                }
+            }
+        }
+        out.push_str(&tail[..close + 2]);
+        out.push_str(replaced.as_deref().unwrap_or(target));
+        out.push(')');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[derive(Default)]
@@ -349,5 +420,121 @@ mod tests {
         let out = convert(&epub);
         assert!(out.starts_with("# My Book"));
         assert!(out.contains("**Author**: Jane Doe"));
+    }
+
+    /// A book whose spine holds one chapter per body, plus extra archive files.
+    fn make_book(bodies: &[&str], extra: &[(&str, &[u8])]) -> Vec<u8> {
+        let container = r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"#;
+        let items: String = (1..=bodies.len())
+            .map(|i| format!(r#"<item id="ch{i}" href="chapter{i}.xhtml" media-type="application/xhtml+xml"/>"#))
+            .collect();
+        let refs: String = (1..=bodies.len())
+            .map(|i| format!(r#"<itemref idref="ch{i}"/>"#))
+            .collect();
+        let opf = format!(
+            r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>My Book</dc:title></metadata>
+  <manifest>{items}</manifest>
+  <spine>{refs}</spine>
+</package>"#
+        );
+
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        let mut files: Vec<(String, Vec<u8>)> = vec![
+            ("META-INF/container.xml".into(), container.as_bytes().to_vec()),
+            ("OEBPS/content.opf".into(), opf.into_bytes()),
+        ];
+        for (i, body) in bodies.iter().enumerate() {
+            let chapter = format!(
+                r#"<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body>{body}</body></html>"#
+            );
+            files.push((format!("OEBPS/chapter{}.xhtml", i + 1), chapter.into_bytes()));
+        }
+        files.extend(extra.iter().map(|(n, d)| (n.to_string(), d.to_vec())));
+        for (name, data) in files {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(&data).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn convert_with(book: &[u8], options: &ConvertOptions) -> Result<String> {
+        let mut out = Vec::new();
+        EpubConverter.convert_with(book, &mut out, options)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    fn pages(spec: &str) -> ConvertOptions {
+        ConvertOptions {
+            pages: Some(spec.parse().unwrap()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pages_select_chapters_in_reading_order() {
+        let book = make_book(
+            &["<p>Alpha text.</p>", "<p>Bravo text.</p>", "<p>Charlie text.</p>"],
+            &[],
+        );
+        let out = convert_with(&book, &pages("2")).unwrap();
+        assert!(out.starts_with("# My Book"), "{out}");
+        assert!(out.contains("Bravo") && !out.contains("Alpha") && !out.contains("Charlie"), "{out}");
+        // Only the separator after the book header: none before the first chapter.
+        assert_eq!(out.matches("\n---\n").count(), 1, "{out}");
+
+        let out = convert_with(&book, &pages("1,3")).unwrap();
+        assert!(out.contains("Alpha") && out.contains("Charlie") && !out.contains("Bravo"), "{out}");
+        assert_eq!(out.matches("\n---\n").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn empty_chapters_are_not_numbered() {
+        // A cover page without text is not a chapter in the output, so it
+        // must not shift the numbers either.
+        let book = make_book(&["<div></div>", "<p>First real.</p>", "<p>Second real.</p>"], &[]);
+        let out = convert_with(&book, &pages("2")).unwrap();
+        assert!(out.contains("Second real.") && !out.contains("First real."), "{out}");
+    }
+
+    #[test]
+    fn pages_outside_the_book_are_an_error() {
+        let book = make_book(&["<p>Only.</p>"], &[]);
+        let err = convert_with(&book, &pages("2-")).unwrap_err().to_string();
+        assert!(err.contains("no chapter matches"), "{err}");
+
+        // An empty book is fine when nothing was asked for.
+        let empty = make_book(&[], &[]);
+        assert!(convert_with(&empty, &ConvertOptions::default()).is_ok());
+    }
+
+    #[test]
+    fn unselected_chapters_do_not_extract_images() {
+        let book = make_book(
+            &[
+                r#"<p>One</p><img src="img/a.png" alt="a"/>"#,
+                r#"<p>Two</p><img src="img/b.png" alt="b"/>"#,
+            ],
+            &[("OEBPS/img/a.png", b"AAA"), ("OEBPS/img/b.png", b"BBB")],
+        );
+        let dir = std::env::temp_dir().join(format!("mq-conv-epub-pages-{}", std::process::id()));
+        let options = ConvertOptions {
+            image_dir: Some(dir.clone()),
+            ..pages("2")
+        };
+        let out = convert_with(&book, &options).unwrap();
+        assert!(out.contains("b.png") && !out.contains("a.png"), "{out}");
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files, vec!["b.png"]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

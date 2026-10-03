@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 
-use crate::converter::Converter;
+use crate::converter::{ConvertOptions, Converter};
 use crate::error::{Error, Result};
 
 pub struct ExcelConverter;
@@ -13,6 +13,15 @@ impl Converter for ExcelConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
+        self.convert_with(input, writer, &ConvertOptions::default())
+    }
+
+    fn convert_with(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        options: &ConvertOptions,
+    ) -> Result<()> {
         let cursor = Cursor::new(input);
         let mut workbook =
             open_workbook_auto_from_rs(cursor).map_err(|e| Error::Conversion {
@@ -21,8 +30,14 @@ impl Converter for ExcelConverter {
             })?;
 
         let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
+        options.check_pages("excel", "sheet", sheet_names.len())?;
 
+        let mut first_written = true;
         for (idx, name) in sheet_names.iter().enumerate() {
+            // Sheets are numbered by position; unselected ones are never read.
+            if !options.is_selected(idx as u32 + 1) {
+                continue;
+            }
             let range = workbook
                 .worksheet_range(name)
                 .map_err(|e| Error::Conversion {
@@ -30,7 +45,7 @@ impl Converter for ExcelConverter {
                     message: e.to_string(),
                 })?;
 
-            if idx > 0 {
+            if !std::mem::take(&mut first_written) {
                 writeln!(writer)?;
             }
             writeln!(writer, "# {name}")?;
@@ -212,7 +227,7 @@ fn table_cell(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::converter::Converter;
+    use crate::converter::{ConvertOptions, Converter};
     use rstest::rstest;
 
     // ── unit tests ────────────────────────────────────────────────────────────
@@ -390,6 +405,109 @@ mod tests {
             }
 
             zip.finish().unwrap().into_inner()
+        }
+
+        /// A workbook with one sheet per `(name, text)`, the text in cell A1.
+        fn make_multi_sheet_xlsx(sheets: &[(&str, &str)]) -> Vec<u8> {
+            let n = sheets.len();
+            let overrides: String = (1..=n)
+                .map(|i| format!(r#"<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#))
+                .collect();
+            let content_types = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>{overrides}
+</Types>"#
+            );
+            let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#;
+            let sheet_tags: String = sheets
+                .iter()
+                .enumerate()
+                .map(|(i, (name, _))| {
+                    format!(r#"<sheet name="{name}" sheetId="{0}" r:id="rId{0}"/>"#, i + 1)
+                })
+                .collect();
+            let workbook = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>{sheet_tags}</sheets>
+</workbook>"#
+            );
+            let rel_tags: String = (1..=n)
+                .map(|i| format!(r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>"#))
+                .collect();
+            let workbook_rels = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rel_tags}</Relationships>"#
+            );
+
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            let mut files = vec![
+                ("[Content_Types].xml".to_string(), content_types),
+                ("_rels/.rels".to_string(), rels.to_string()),
+                ("xl/workbook.xml".to_string(), workbook),
+                ("xl/_rels/workbook.xml.rels".to_string(), workbook_rels),
+            ];
+            for (i, (_, text)) in sheets.iter().enumerate() {
+                files.push((
+                    format!("xl/worksheets/sheet{}.xml", i + 1),
+                    format!(
+                        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>{text}</t></is></c></row></sheetData></worksheet>"#
+                    ),
+                ));
+            }
+            for (name, content) in files {
+                zip.start_file(name, opts).unwrap();
+                zip.write_all(content.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap().into_inner()
+        }
+
+        fn convert_pages(xlsx: &[u8], pages: &str) -> Result<String> {
+            let options = ConvertOptions {
+                pages: Some(pages.parse().unwrap()),
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            ExcelConverter.convert_with(xlsx, &mut out, &options)?;
+            Ok(String::from_utf8(out).unwrap())
+        }
+
+        #[test]
+        fn pages_select_sheets_by_position() {
+            let xlsx = make_multi_sheet_xlsx(&[
+                ("Alpha", "a-text"),
+                ("Beta", "b-text"),
+                ("Gamma", "c-text"),
+            ]);
+
+            let out = convert_pages(&xlsx, "2").unwrap();
+            assert!(out.starts_with("# Beta\n"), "{out}");
+            assert!(out.contains("b-text") && !out.contains("a-text") && !out.contains("c-text"), "{out}");
+
+            let out = convert_pages(&xlsx, "1,3").unwrap();
+            assert!(out.contains("# Alpha") && out.contains("# Gamma") && !out.contains("Beta"), "{out}");
+            assert!(out.contains("a-text\n\n# Gamma"), "sheets not separated:\n{out}");
+
+            // Without a selection every sheet is converted, as before.
+            let all = ExcelConverter.convert(&xlsx, &mut Vec::new());
+            assert!(all.is_ok());
+        }
+
+        #[test]
+        fn pages_outside_the_workbook_are_an_error() {
+            let xlsx = make_multi_sheet_xlsx(&[("Alpha", "a-text")]);
+            let err = convert_pages(&xlsx, "2-3").unwrap_err().to_string();
+            assert!(err.contains("no sheet matches"), "{err}");
         }
 
         fn make_xlsx_with_date_cell(serial: &str) -> Vec<u8> {

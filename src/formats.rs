@@ -19,6 +19,7 @@ pub mod html;
 pub mod image;
 #[cfg(feature = "json")]
 pub mod json;
+pub mod media;
 #[cfg(feature = "markdown_docx")]
 pub mod markdown_docx;
 #[cfg(feature = "markdown_html")]

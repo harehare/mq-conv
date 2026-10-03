@@ -28,7 +28,10 @@ Most "convert to Markdown" tools either dump raw text or call out to a cloud LLM
 
 ### Key Features
 
-- **Layout-Aware PDF Parsing** — headings, paragraphs, lists, tables from glyph positions; strips repeated headers/footers/page numbers
+- **Layout-Aware PDF Parsing** — a native glyph-position parser (no PDF-to-text library): multi-column reading order, headings, lists, ruled and borderless tables, links, CJK fonts; strips repeated headers/footers/page numbers
+- **Parallel** — PDF pages and input files are converted on all cores; a broken page never takes the rest of the document down
+- **Token Budgeting** — `--max-tokens` / `--cursor` page through large documents at block boundaries
+- **Embedded Images** — `--extract-images` writes images from PDF, Word, PowerPoint and EPUB and links them from the Markdown
 - **Hyperlink Preservation** — Word links survive as `[text](url)`
 - **Automatic Format Detection** — by extension and magic bytes
 - **20+ Supported Formats** — documents, markup, data, media, archives
@@ -94,7 +97,17 @@ cat input.json | mq-conv --format json
 
 # Convert a whole batch of files into a directory of .md files
 mq-conv reports/*.pdf notes/*.docx --output-dir ./out
+
+# Keep embedded images: written to ./img and linked as ![image](img/...)
+mq-conv report.pdf --extract-images ./img
+
+# Page through a large document ~4000 tokens at a time
+mq-conv book.pdf --max-tokens 4000
+# ...ends with: <!-- mq-conv: next-cursor=18342 chunk-tokens=3921 total-tokens=187450 -->
+mq-conv book.pdf --max-tokens 4000 --cursor 18342
 ```
+
+`--max-tokens` cuts at block boundaries (paragraphs, tables and code blocks stay whole) using a built-in estimate (about 4 ASCII characters, or one CJK character, per token). A cursor is a byte offset into the converted Markdown; conversion is deterministic, so the same command with `--cursor` resumes exactly where the previous chunk stopped. Both options take a single input.
 
 ### Combine with mq
 
@@ -173,7 +186,13 @@ mq conv slides.pptx | mq view
 
 Each converter reconstructs Markdown structure from the source format's own layout signals, not just raw text:
 
-- **PDF** — glyphs are grouped by position/font into words, lines, paragraphs, lists, and tables (via x-position clustering). Headings come from relative font size; repeated headers/footers/page numbers are stripped.
+- **PDF** — `lopdf` only reads PDF objects and decompresses streams; everything else is done here from glyph coordinates:
+  - fonts are decoded through `/ToUnicode`, `/Encoding` + `/Differences`, the embedded Type 1 / CFF font's own encoding, predefined CJK CMaps, and Adobe-Japan1 CIDs (so Japanese PDFs without `/ToUnicode` still extract);
+  - glyphs become words (by gaps measured against font size) and lines, and reading order comes from an XY-cut, so multi-column pages read column by column;
+  - tables are detected from drawn rules (merged cells included) or, for borderless tables, from aligned whitespace columns;
+  - headings come from relative font size, lists from bullet/number markers, code from monospaced fonts, links from annotations, and contents pages from dot leaders;
+  - repeated running headers/footers and page numbers are removed;
+  - with the `ocr` feature, image-only pages fall back to Tesseract.
 - **Word / PowerPoint** — parsed directly from OOXML (`document.xml` / `slideN.xml`): headings, bold/italic, hyperlinks, list nesting, tables. No Office/LibreOffice shell-out.
 - **Excel** — each sheet is split into blocks by blank rows, then each block is classified as table or free text.
 - **HTML** — delegated to [mq-markdown](https://github.com/harehare/mq)'s HTML-to-Markdown engine.
@@ -193,6 +212,9 @@ Options:
   -o, --output-dir <OUTPUT_DIR>  Output directory for individual output files (one per input file)
       --to <TO>                  Target output format when converting from Markdown
       --ocr-lang <OCR_LANG>      Tesseract language for OCR, e.g. "jpn" or "eng+jpn" [default: eng]
+      --extract-images <DIR>     Extract embedded images (PDF, DOCX, PPTX, EPUB) into DIR and link them
+      --max-tokens <N>           Emit at most ~N tokens, cut at block boundaries (single input)
+      --cursor <OFFSET>          Resume from the cursor printed by a previous --max-tokens run [default: 0]
   -h, --help                     Print help
   -V, --version                  Print version
 ```

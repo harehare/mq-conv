@@ -3,7 +3,8 @@ use std::io::{Cursor, Read, Write};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::converter::Converter;
+use crate::converter::{ConvertOptions, Converter};
+use crate::formats::media::{MediaWriter, is_image_name, resolve_archive_path};
 use crate::error::{Error, Result};
 
 pub struct EpubConverter;
@@ -14,6 +15,19 @@ impl Converter for EpubConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
+        self.convert_with(input, writer, &ConvertOptions::default())
+    }
+
+    fn convert_with(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        options: &ConvertOptions,
+    ) -> Result<()> {
+        let mut media = options
+            .image_dir
+            .as_deref()
+            .and_then(|dir| MediaWriter::new(dir).ok());
         let cursor = Cursor::new(input);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|e| Error::Conversion {
             format: "epub",
@@ -73,6 +87,13 @@ impl Converter for EpubConverter {
 
             if let Ok(html_content) = read_entry(&mut archive, &full_path) {
                 let text = html_to_markdown(&html_content);
+                let text = match media.as_mut() {
+                    Some(m) => {
+                        let chapter_dir = full_path.rsplit_once('/').map_or("", |(d, _)| d);
+                        extract_markdown_images(&text, chapter_dir, &mut archive, m)
+                    }
+                    None => text,
+                };
                 let text = text.trim();
                 if !text.is_empty() {
                     chapter_num += 1;
@@ -89,6 +110,51 @@ impl Converter for EpubConverter {
 
         Ok(())
     }
+}
+
+/// Copy images referenced by `![alt](relative/path)` out of the archive and
+/// point the links at the extracted files.
+fn extract_markdown_images(
+    markdown: &str,
+    chapter_dir: &str,
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    media: &mut MediaWriter,
+) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut rest = markdown;
+    while let Some(start) = rest.find("![") {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let Some(close) = tail.find("](") else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let after = &tail[close + 2..];
+        let Some(end) = after.find(')') else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let target = after[..end].trim();
+        let target_path = target.split(['#', '?']).next().unwrap_or(target);
+        let mut replaced = None;
+        if is_image_name(target_path) && !target_path.contains("://") && !target_path.starts_with("data:") {
+            let full = resolve_archive_path(chapter_dir, target_path);
+            if let Ok(mut file) = archive.by_name(&full) {
+                let mut data = Vec::new();
+                if file.read_to_end(&mut data).is_ok() {
+                    replaced = media.save(&full, &data);
+                }
+            }
+        }
+        out.push_str(&tail[..close + 2]);
+        out.push_str(replaced.as_deref().unwrap_or(target));
+        out.push(')');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[derive(Default)]

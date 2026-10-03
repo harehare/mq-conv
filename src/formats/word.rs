@@ -4,7 +4,8 @@ use std::io::{Cursor, Read, Write};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::converter::Converter;
+use crate::converter::{ConvertOptions, Converter};
+use crate::formats::media::{extract_related_images, parse_relationships};
 use crate::error::{Error, Result};
 
 pub struct WordConverter;
@@ -15,6 +16,15 @@ impl Converter for WordConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
+        self.convert_with(input, writer, &ConvertOptions::default())
+    }
+
+    fn convert_with(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        options: &ConvertOptions,
+    ) -> Result<()> {
         let cursor = Cursor::new(input);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|e| Error::Conversion {
             format: "word",
@@ -24,11 +34,16 @@ impl Converter for WordConverter {
         let rels = read_entry(&mut archive, "word/_rels/document.xml.rels")
             .map(|xml| parse_relationships(&xml))
             .unwrap_or_default();
+        let images = options
+            .image_dir
+            .as_deref()
+            .map(|dir| extract_related_images(&mut archive, "word/", &rels, dir))
+            .unwrap_or_default();
         let numbering = read_entry(&mut archive, "word/numbering.xml")
             .map(|xml| parse_numbering(&xml))
             .unwrap_or_default();
         let document_xml = read_entry(&mut archive, "word/document.xml")?;
-        let paragraphs = parse_document(&document_xml, &rels, &numbering)?;
+        let paragraphs = parse_document(&document_xml, &rels, &numbering, &images)?;
 
         let mut first = true;
         for para in &paragraphs {
@@ -96,6 +111,7 @@ fn parse_document(
     xml: &str,
     rels: &HashMap<String, String>,
     numbering: &HashMap<(String, u32), bool>,
+    images: &HashMap<String, String>,
 ) -> Result<Vec<Paragraph>> {
     let mut paragraphs = Vec::new();
     let mut reader = Reader::from_str(xml);
@@ -139,6 +155,15 @@ fn parse_document(
                         current_num_id = None;
                     }
                     "r" => in_run = true,
+                    "blip" => {
+                        if let Some(md) = embedded_image(&e, images) {
+                            if in_table_cell {
+                                cell_text.push_str(&md);
+                            } else if in_paragraph {
+                                current_text.push_str(&md);
+                            }
+                        }
+                    }
                     "hyperlink" => {
                         in_hyperlink = true;
                         hyperlink_buf.clear();
@@ -170,6 +195,15 @@ fn parse_document(
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == "w:val" || attr.key.as_ref() == "val" {
                                 current_style = Some(attr.value.to_string());
+                            }
+                        }
+                    }
+                    "blip" => {
+                        if let Some(md) = embedded_image(&e, images) {
+                            if in_table_cell {
+                                cell_text.push_str(&md);
+                            } else if in_paragraph {
+                                current_text.push_str(&md);
                             }
                         }
                     }
@@ -303,34 +337,18 @@ fn parse_document(
     Ok(paragraphs)
 }
 
-fn parse_relationships(xml: &str) -> HashMap<String, String> {
-    let mut rels = HashMap::new();
-    let mut reader = Reader::from_str(xml);
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e))
-                if local_name(e.name().as_ref()) == "Relationship" =>
-            {
-                let mut id = None;
-                let mut target = None;
-                for attr in e.attributes().flatten() {
-                    match attr.key.as_ref() {
-                        "Id" => id = Some(attr.value.to_string()),
-                        "Target" => target = Some(attr.value.to_string()),
-                        _ => {}
-                    }
-                }
-                if let (Some(id), Some(target)) = (id, target) {
-                    rels.insert(id, target);
-                }
-            }
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
-        }
-    }
-
-    rels
+/// `![image](path)` for a `a:blip r:embed="rIdN"` element, if that image was extracted.
+fn embedded_image(
+    e: &quick_xml::events::BytesStart,
+    images: &HashMap<String, String>,
+) -> Option<String> {
+    let id = e
+        .attributes()
+        .flatten()
+        .find(|a| a.key.as_ref() == "r:embed" || a.key.as_ref() == "embed")
+        .map(|a| a.value.to_string())?;
+    let path = images.get(&id)?;
+    Some(format!("![image]({path})"))
 }
 
 fn attr_value(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
@@ -498,7 +516,7 @@ fn local_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::converter::Converter;
+    use crate::converter::{ConvertOptions, Converter};
 
     fn make_docx(document_xml: &str, rels_xml: Option<&str>) -> Vec<u8> {
         let buf = Vec::new();
@@ -655,5 +673,47 @@ mod tests {
         let docx = make_docx(&doc_xml(body), None);
         let out = convert(&docx);
         assert!(out.contains("Line one<br>Line two"), "{out}");
+    }
+
+    #[test]
+    fn test_embedded_image_is_extracted_and_referenced() {
+        let body = r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>
+            <w:p><w:r><w:drawing><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></w:drawing></w:r></w:p>
+            <w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId5" Type="image" Target="media/image1.png"/></Relationships>"#;
+
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in [
+            ("word/document.xml", doc_xml(body).into_bytes()),
+            ("word/_rels/document.xml.rels", rels.as_bytes().to_vec()),
+            ("word/media/image1.png", b"PNGDATA".to_vec()),
+        ] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(&data).unwrap();
+        }
+        let docx = zip.finish().unwrap().into_inner();
+
+        let dir = std::env::temp_dir().join(format!("mq-conv-docx-{}", std::process::id()));
+        let options = ConvertOptions { image_dir: Some(dir.clone()), ocr_lang: None };
+        let mut out = Vec::new();
+        WordConverter.convert_with(&docx, &mut out, &options).unwrap();
+        let md = String::from_utf8(out).unwrap();
+
+        let image_line = format!("![image]({})", dir.join("image1.png").to_string_lossy());
+        let (before, img, after) = (
+            md.find("Before").unwrap(),
+            md.find(&image_line).unwrap_or_else(|| panic!("no image link in:\n{md}")),
+            md.find("After").unwrap(),
+        );
+        assert!(before < img && img < after, "image out of place:\n{md}");
+        assert_eq!(std::fs::read(dir.join("image1.png")).unwrap(), b"PNGDATA");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // Without an image directory the image is simply omitted.
+        let plain = convert(&docx);
+        assert!(!plain.contains("!["), "{plain}");
     }
 }

@@ -3,8 +3,9 @@ use std::io::{Cursor, Read, Write};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::converter::Converter;
+use crate::converter::{ConvertOptions, Converter};
 use crate::error::{Error, Result};
+use crate::formats::media::{extract_related_images, parse_relationships};
 
 pub struct PowerPointConverter;
 
@@ -14,6 +15,15 @@ impl Converter for PowerPointConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
+        self.convert_with(input, writer, &ConvertOptions::default())
+    }
+
+    fn convert_with(
+        &self,
+        input: &[u8],
+        writer: &mut dyn Write,
+        options: &ConvertOptions,
+    ) -> Result<()> {
         let cursor = Cursor::new(input);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|e| Error::Conversion {
             format: "powerpoint",
@@ -107,6 +117,21 @@ impl Converter for PowerPointConverter {
                 writeln!(writer)?;
             }
 
+            // Pictures (only when an image directory was requested)
+            if let Some(dir) = options.image_dir.as_deref() {
+                let rels_name = slide_name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
+                if let Ok(rels_xml) = read_entry(&mut archive, &rels_name) {
+                    let rels = parse_relationships(&rels_xml);
+                    let images = extract_related_images(&mut archive, "ppt/slides/", &rels, dir);
+                    for id in slide_image_ids(&xml) {
+                        if let Some(path) = images.get(&id) {
+                            writeln!(writer, "![image]({path})")?;
+                            writeln!(writer)?;
+                        }
+                    }
+                }
+            }
+
             // Speaker notes
             let notes_name =
                 slide_name.replace("ppt/slides/slide", "ppt/notesSlides/notesSlide");
@@ -153,6 +178,28 @@ struct TextRun {
     text: String,
     bold: bool,
     italic: bool,
+}
+
+/// Relationship ids of the pictures (`a:blip r:embed`) in a slide, in document order.
+fn slide_image_ids(xml: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut reader = Reader::from_str(xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if local_name(e.name().as_ref()) == "blip" => {
+                if let Some(a) = e
+                    .attributes()
+                    .flatten()
+                    .find(|a| a.key.as_ref() == "r:embed" || a.key.as_ref() == "embed")
+                {
+                    ids.push(a.value.to_string());
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    ids
 }
 
 fn render_paragraph(para: &Paragraph) -> String {

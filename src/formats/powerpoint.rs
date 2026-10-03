@@ -47,14 +47,21 @@ impl Converter for PowerPointConverter {
                 .unwrap_or(0)
         });
 
+        options.check_pages("powerpoint", "slide", slide_names.len())?;
+
         // One writer for the whole deck so image names stay unique across slides.
         let mut media = MediaWriter::from_options(options);
+        let mut first_written = true;
 
         for (idx, slide_name) in slide_names.iter().enumerate() {
+            // Slide numbers stay those of the deck, whatever `--pages` skips.
+            if !options.is_selected(idx as u32 + 1) {
+                continue;
+            }
             let xml = read_entry(&mut archive, slide_name)?;
             let content = extract_slide_content(&xml)?;
 
-            if idx > 0 {
+            if !std::mem::take(&mut first_written) {
                 writeln!(writer)?;
                 writeln!(writer, "---")?;
                 writeln!(writer)?;
@@ -921,5 +928,48 @@ mod tests {
         assert_eq!(links[0], links[1], "{md}");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn convert_pages(pptx: &[u8], pages: &str) -> Result<String> {
+        let options = ConvertOptions {
+            pages: Some(pages.parse().unwrap()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        PowerPointConverter.convert_with(pptx, &mut out, &options)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    fn three_slides() -> Vec<u8> {
+        let s1 = slide_xml(&format!("{}{}", title_shape("First"), body_shape("one")));
+        let s2 = slide_xml(&body_shape("two"));
+        let s3 = slide_xml(&body_shape("three"));
+        make_pptx(&[
+            ("ppt/slides/slide1.xml", &s1),
+            ("ppt/slides/slide2.xml", &s2),
+            ("ppt/slides/slide3.xml", &s3),
+        ])
+    }
+
+    #[test]
+    fn pages_select_slides_and_keep_their_numbers() {
+        let pptx = three_slides();
+
+        // The first emitted slide has no leading separator, and an untitled
+        // slide is still called by its position in the deck.
+        let out = convert_pages(&pptx, "3").unwrap();
+        assert!(out.starts_with("# Slide 3"), "{out}");
+        assert!(out.contains("three") && !out.contains("two") && !out.contains("First"), "{out}");
+
+        let out = convert_pages(&pptx, "1,3").unwrap();
+        assert!(out.starts_with("# First"), "{out}");
+        assert_eq!(out.matches("\n---\n").count(), 1, "{out}");
+        assert!(out.contains("# Slide 3") && !out.contains("two"), "{out}");
+    }
+
+    #[test]
+    fn pages_outside_the_deck_are_an_error() {
+        let err = convert_pages(&three_slides(), "4-").unwrap_err().to_string();
+        assert!(err.contains("no slide matches"), "{err}");
     }
 }

@@ -138,7 +138,10 @@ fn query_prints_only_the_matching_nodes() {
 fn query_functions_know_the_input() {
     let dir = html_dir("query-fns");
     // The query runs once per top-level node, so the line repeats.
-    let out = run(&dir, &["guide.html", "-q", r#"format() + " " + filename()"#]);
+    let out = run(
+        &dir,
+        &["guide.html", "-q", r#"format() + " " + filename()"#],
+    );
     assert!(out.status.success(), "{}", stderr(&out));
     let text = stdout(&out);
     assert!(!text.is_empty());
@@ -174,7 +177,11 @@ fn query_errors_are_reported() {
     assert!(stderr(&with_to).contains("--to"), "{}", stderr(&with_to));
     let md_input = run(&dir, &["notes.md", "-q", ".h1"]);
     assert!(!md_input.status.success());
-    assert!(stderr(&md_input).contains("Markdown output"), "{}", stderr(&md_input));
+    assert!(
+        stderr(&md_input).contains("Markdown output"),
+        "{}",
+        stderr(&md_input)
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -193,8 +200,11 @@ fn pages_is_rejected_for_non_pdf_input() {
 #[test]
 fn pages_selects_pdf_pages_through_the_cli() {
     let dir = scratch("pdf-pages");
-    let pdf = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pdf/sample_ja.pdf"))
-        .unwrap();
+    let pdf = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/pdf/sample_ja.pdf"
+    ))
+    .unwrap();
     std::fs::write(dir.join("a.pdf"), pdf).unwrap();
 
     let first = run(&dir, &["a.pdf", "--pages", "1"]);
@@ -203,6 +213,10 @@ fn pages_selects_pdf_pages_through_the_cli() {
 
     let none = run(&dir, &["a.pdf", "--pages", "50"]);
     assert!(!none.status.success());
-    assert!(stderr(&none).contains("no page matches"), "{}", stderr(&none));
+    assert!(
+        stderr(&none).contains("no page matches"),
+        "{}",
+        stderr(&none)
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

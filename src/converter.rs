@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -16,9 +16,29 @@ pub struct ConvertOptions {
     pub image_link_dir: Option<PathBuf>,
     /// Tesseract language used for OCR fallbacks (default "eng").
     pub ocr_lang: Option<String>,
-    /// Convert only these pages (PDF). Page numbers in the output stay those
-    /// of the source document.
+    /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets).
+    /// Numbers in the output stay those of the source document.
     pub pages: Option<PageRanges>,
+}
+
+impl ConvertOptions {
+    /// Whether the 1-based `page` is wanted; true when no selection was given.
+    pub fn is_selected(&self, page: u32) -> bool {
+        self.pages.as_ref().is_none_or(|p| p.contains(page))
+    }
+
+    /// Fail when `--pages` is set but matches none of `total` pages. `unit`
+    /// names what the format calls a page ("page", "slide", "sheet").
+    pub fn check_pages(&self, format: &'static str, unit: &str, total: usize) -> Result<()> {
+        let any = (1..=total).any(|n| self.is_selected(n as u32));
+        if any {
+            return Ok(());
+        }
+        Err(Error::Conversion {
+            format,
+            message: format!("no {unit} matches --pages (the document has {total} {unit}s)"),
+        })
+    }
 }
 
 /// A set of 1-based page numbers, written like `3`, `2-5`, `7-` or `1,4-6`.
@@ -55,7 +75,11 @@ impl FromStr for PageRanges {
                         return Err("page range '-' needs a start or an end".to_string());
                     }
                     let lo = if lo.trim().is_empty() { 1 } else { page(lo)? };
-                    let hi = if hi.trim().is_empty() { u32::MAX } else { page(hi)? };
+                    let hi = if hi.trim().is_empty() {
+                        u32::MAX
+                    } else {
+                        page(hi)?
+                    };
                     if lo > hi {
                         return Err(format!("page range '{part}' is backwards"));
                     }

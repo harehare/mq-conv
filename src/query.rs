@@ -60,7 +60,9 @@ fn register_functions(engine: &DefaultEngine, ctx: &QueryContext) {
 fn register_constant(engine: &DefaultEngine, name: &'static str, value: Option<String>) {
     engine.register_fn(name, move |args: &[RuntimeValue]| -> HostFnResult {
         if !args.is_empty() {
-            return Err(HostFunctionError::new(format!("{name}() takes no arguments")));
+            return Err(HostFunctionError::new(format!(
+                "{name}() takes no arguments"
+            )));
         }
         Ok(value.clone().map_or(RuntimeValue::NONE, RuntimeValue::from))
     });
@@ -96,7 +98,10 @@ mod tests {
     #[test]
     fn tokens_matches_the_budget_estimate() {
         let n = estimate_tokens("## Usage");
-        assert_eq!(query(r#".h2 | select(tokens(.) == 2) | to_text()"#), "Usage\n");
+        assert_eq!(
+            query(r#".h2 | select(tokens(.) == 2) | to_text()"#),
+            "Usage\n"
+        );
         // A query runs once per top-level node.
         let per_node = query("tokens(\"abcdefgh\") | to_text()");
         assert!(per_node.lines().all(|l| l == "2"), "{per_node}");

@@ -37,8 +37,9 @@ struct Args {
     #[arg(short = 'q', long, value_name = "QUERY")]
     query: Option<String>,
 
-    /// Convert only these pages of a PDF, e.g. "3", "2-5", "7-" or "1,4-6".
-    /// Page markers in the output keep the original page numbers.
+    /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets),
+    /// e.g. "3", "2-5", "7-" or "1,4-6". Numbers in the output stay those of
+    /// the source document.
     #[arg(long, value_name = "PAGES")]
     pages: Option<PageRanges>,
 
@@ -200,8 +201,11 @@ fn convert_bytes(
             miette::miette!("Could not detect file format. Use --format to specify.")
         })?
     };
-    if args.pages.is_some() && detected != Format::Pdf {
-        return Err(miette::miette!("--pages is only valid for PDF input"));
+    if args.pages.is_some() && !matches!(detected, Format::Pdf | Format::PowerPoint | Format::Excel)
+    {
+        return Err(miette::miette!(
+            "--pages is only valid for PDF, PowerPoint and Excel input"
+        ));
     }
     let format = resolve_output_format(detected, args.to.as_ref())?;
     let converter =

@@ -73,13 +73,8 @@ impl Converter for PdfConverter {
         // `--pages` limits what is rendered, not what is analysed: heading
         // levels and running headers come from statistics over the whole
         // document, so a page converts the same with or without the option.
-        let selected = |number: u32| options.pages.as_ref().is_none_or(|p| p.contains(number));
-        if !pages.iter().any(|&(n, _)| selected(n)) {
-            return Err(err(format!(
-                "no page matches --pages (the document has {} pages)",
-                pages.len()
-            )));
-        }
+        let selected = |number: u32| options.is_selected(number);
+        options.check_pages("pdf", "page", pages.len())?;
 
         // Phase 1: per-page extraction (parallel, failures isolated per page).
         let prepared: Vec<Option<Prepared>> = par_map(&pages, |&(number, id)| {

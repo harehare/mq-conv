@@ -459,6 +459,20 @@ fn test_selected_page_matches_the_full_conversion() {
 }
 
 #[test]
+fn test_blank_selected_page_keeps_its_marker() {
+    let p1 = text("F1", 10, 20, 220, "Page one content.");
+    let pdf = make_pdf(&[&p1, ""], "[0 0 300 300]", None);
+
+    let out = convert_pages(&pdf, "2").unwrap();
+    assert!(out.contains("<!-- page 2 -->"), "{out}");
+    assert!(!out.contains("no extractable text") && !out.contains("page 1"), "{out}");
+
+    // Without `--pages` the document-level fallback is unchanged.
+    let blank = make_pdf(&["", ""], "[0 0 300 300]", None);
+    assert!(convert(&blank).contains("no extractable text"));
+}
+
+#[test]
 fn test_pages_option_outside_the_document_is_an_error() {
     let pdf = three_pages();
     let err = convert_pages(&pdf, "9-").unwrap_err().to_string();

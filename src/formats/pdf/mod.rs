@@ -120,7 +120,9 @@ impl Converter for PdfConverter {
         let wanted = || prepared.iter().flatten().filter(|p| selected(p.number));
         let any_text = wanted().any(|p| !p.words.is_empty());
         let any_image = wanted().any(|p| !p.content.images.is_empty());
-        if !any_text && !(any_image && cfg!(feature = "ocr")) {
+        // The fallback describes the whole document. With `--pages` the caller
+        // asked for specific pages, so each keeps its marker even when blank.
+        if options.pages.is_none() && !any_text && !(any_image && cfg!(feature = "ocr")) {
             writeln!(
                 writer,
                 "*PDF contains no extractable text (may be scanned/image-based)*"

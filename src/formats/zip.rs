@@ -41,7 +41,13 @@ impl Converter for ZipConverter {
                 message: e.to_string(),
             })?;
 
-            let name = entry.name().to_string();
+            let name = entry
+                .name()
+                .map_err(|e| Error::Conversion {
+                    format: "zip",
+                    message: e.to_string(),
+                })?
+                .into_owned();
             let size = entry.size();
             let compressed = entry.compressed_size();
             let method = format!("{:?}", entry.compression());

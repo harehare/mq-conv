@@ -33,7 +33,9 @@ impl Converter for PowerPointConverter {
         let mut slide_names: Vec<String> = Vec::new();
         for i in 0..archive.len() {
             if let Ok(entry) = archive.by_index(i) {
-                let name = entry.name().to_string();
+                let Ok(name) = entry.name().map(|n| n.into_owned()) else {
+                    continue;
+                };
                 if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
                     slide_names.push(name);
                 }

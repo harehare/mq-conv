@@ -181,7 +181,7 @@ wasm-bindgen = "0.2"
 
 [dev-dependencies]
 pretty_assertions = "1"
-rstest = "0.27"
+rstest = "0.28"
 
 [profile.release]
 codegen-units = 1

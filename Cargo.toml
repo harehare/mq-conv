@@ -163,7 +163,7 @@ image = {version = "0.25", optional = true, default-features = false, features =
 kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.24", optional = true}
-lopdf = {version = "0.45", optional = true, default-features = false}
+lopdf = {version = "0.46", optional = true, default-features = false}
 mq-lang = {version = "0.9.3", optional = true}
 mq-markdown = {version = "0.9.3", optional = true, features = ["html-to-markdown", "json"]}
 quick-xml = {version = "0.42", optional = true}

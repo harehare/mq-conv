@@ -224,10 +224,10 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
                 doc = flush_inline_runs(doc, &mut inline_runs);
                 let text = extract_text(&h.values);
                 let para = Paragraph::new()
-                    .style(heading_style(h.depth))
+                    .style(heading_style(h.depth.get()))
                     .add_run(Run::new().add_text(&text));
                 doc = doc.add_paragraph(para);
-                prev_end_line = h.position.as_ref().map(|p| p.end.line);
+                prev_end_line = h.position.as_ref().map(|p| p.end.line as usize);
             }
 
             Node::Code(c) => {
@@ -240,7 +240,7 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
                     );
                     doc = doc.add_paragraph(para);
                 }
-                prev_end_line = c.position.as_ref().map(|p| p.end.line);
+                prev_end_line = c.position.as_ref().map(|p| p.end.line as usize);
             }
 
             Node::List(l) => {
@@ -255,7 +255,7 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
                     .numbering(NumberingId::new(numbering_id), IndentLevel::new(level))
                     .add_run(Run::new().add_text(&text));
                 doc = doc.add_paragraph(para);
-                prev_end_line = l.position.as_ref().map(|p| p.end.line);
+                prev_end_line = l.position.as_ref().map(|p| p.end.line as usize);
             }
 
             Node::Blockquote(bq) => {
@@ -265,7 +265,7 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
                     .style("Quote")
                     .add_run(Run::new().add_text(&text));
                 doc = doc.add_paragraph(para);
-                prev_end_line = bq.position.as_ref().map(|p| p.end.line);
+                prev_end_line = bq.position.as_ref().map(|p| p.end.line as usize);
             }
 
             Node::HorizontalRule(_) => {
@@ -286,10 +286,10 @@ fn build_docx(markdown: &str) -> std::result::Result<Docx, Box<dyn std::error::E
                 if let Some(pos) = node.position()
                     && let Some(end) = prev_end_line
                 {
-                    if pos.start.line > end + 1 {
+                    if pos.start.line as usize > end + 1 {
                         doc = flush_inline_runs(doc, &mut inline_runs);
                     }
-                    prev_end_line = Some(pos.end.line);
+                    prev_end_line = Some(pos.end.line as usize);
                 }
                 let runs = match node {
                     Node::Text(t) => vec![(t.value.clone(), false, false, false)],

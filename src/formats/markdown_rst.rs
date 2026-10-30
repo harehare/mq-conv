@@ -143,7 +143,7 @@ fn write_rst(nodes: &[Node], writer: &mut dyn Write) -> std::io::Result<()> {
         match node {
             Node::Heading(h) => {
                 let text = extract_text(&h.values);
-                let underline = heading_char(h.depth).to_string().repeat(text.chars().count().max(1));
+                let underline = heading_char(h.depth.get()).to_string().repeat(text.chars().count().max(1));
                 writeln!(writer, "{text}")?;
                 writeln!(writer, "{underline}")?;
                 writeln!(writer)?;

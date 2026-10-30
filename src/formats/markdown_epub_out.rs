@@ -102,7 +102,7 @@ fn nodes_to_html(nodes: &[&Node]) -> String {
     for node in nodes {
         match node {
             Node::Heading(h) => {
-                let prefix = "#".repeat(h.depth as usize);
+                let prefix = "#".repeat(usize::from(h.depth));
                 let text = extract_text(&h.values);
                 md.push_str(&format!("{prefix} {text}\n\n"));
             }

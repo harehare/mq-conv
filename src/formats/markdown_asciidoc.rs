@@ -134,7 +134,7 @@ fn write_asciidoc(nodes: &[Node], writer: &mut dyn Write) -> std::io::Result<()>
 
         match node {
             Node::Heading(h) => {
-                let prefix = "=".repeat(h.depth as usize);
+                let prefix = "=".repeat(usize::from(h.depth));
                 let text = inline_to_asciidoc(&h.values);
                 writeln!(writer, "{prefix} {text}")?;
                 writeln!(writer)?;

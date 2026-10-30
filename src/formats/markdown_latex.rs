@@ -168,7 +168,7 @@ fn write_latex(nodes: &[Node], writer: &mut dyn Write) -> std::io::Result<()> {
             Node::Heading(h) => {
                 close_list!();
                 let text = inline_to_latex(&h.values);
-                let cmd = match h.depth {
+                let cmd = match h.depth.get() {
                     1 => r"\section",
                     2 => r"\subsection",
                     3 => r"\subsubsection",

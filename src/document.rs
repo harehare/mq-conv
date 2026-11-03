@@ -20,12 +20,21 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     /// A heading of level 1 to 6.
-    Heading { level: u8, content: Vec<Inline> },
+    Heading {
+        level: u8,
+        content: Vec<Inline>,
+    },
     Paragraph(Vec<Inline>),
     /// Each item is a sequence of blocks; a nested list is a block of its item.
-    List { ordered: bool, items: Vec<Vec<Block>> },
+    List {
+        ordered: bool,
+        items: Vec<Vec<Block>>,
+    },
     /// Preformatted text, with an optional info string such as the language.
-    Code { lang: Option<String>, text: String },
+    Code {
+        lang: Option<String>,
+        text: String,
+    },
     Quote(Vec<Block>),
     Rule,
     /// Rows of cells; the first row is the header.
@@ -38,6 +47,7 @@ pub enum Inline {
     Text(String),
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
+    Strike(Vec<Inline>),
     Code(String),
     Link { url: String, content: Vec<Inline> },
     Image { url: String, alt: String },
@@ -148,6 +158,40 @@ impl Document {
     pub fn write_markdown(&self, writer: &mut dyn Write) -> Result<()> {
         write!(writer, "{}", render_blocks(&self.blocks))?;
         Ok(())
+    }
+}
+
+/// Collects blocks while reading a markup format line by line. A run of list
+/// items is flushed as lists before any other block.
+#[derive(Default)]
+pub struct Builder {
+    doc: Document,
+    items: Vec<FlatItem>,
+}
+
+impl Builder {
+    fn flush(&mut self) {
+        let items = std::mem::take(&mut self.items);
+        self.doc.extend(Block::lists(items));
+    }
+
+    pub fn push(&mut self, block: Block) {
+        self.flush();
+        self.doc.push(block);
+    }
+
+    /// Adds a list item; consecutive items form one list.
+    pub fn item(&mut self, depth: usize, ordered: bool, content: Vec<Inline>) {
+        self.items.push(FlatItem {
+            depth,
+            ordered,
+            content,
+        });
+    }
+
+    pub fn finish(mut self) -> Document {
+        self.flush();
+        self.doc
     }
 }
 
@@ -292,12 +336,21 @@ fn inlines(content: &[Inline], in_cell: bool) -> String {
             Inline::Text(text) => out.push_str(&escape(text, in_cell, at_start)),
             Inline::Emphasis(inner) => out.push_str(&wrap("*", inner, in_cell)),
             Inline::Strong(inner) => out.push_str(&wrap("**", inner, in_cell)),
+            Inline::Strike(inner) => out.push_str(&wrap("~~", inner, in_cell)),
             Inline::Code(code) => out.push_str(&code_span(code)),
             Inline::Link { url, content } => {
-                out.push_str(&format!("[{}]({})", inlines(content, in_cell), destination(url)));
+                out.push_str(&format!(
+                    "[{}]({})",
+                    inlines(content, in_cell),
+                    destination(url)
+                ));
             }
             Inline::Image { url, alt } => {
-                out.push_str(&format!("![{}]({})", escape(alt, in_cell, false), destination(url)));
+                out.push_str(&format!(
+                    "![{}]({})",
+                    escape(alt, in_cell, false),
+                    destination(url)
+                ));
             }
         }
     }
@@ -477,6 +530,12 @@ mod tests {
     }
 
     #[test]
+    fn strike_wraps_in_tildes() {
+        let d = doc(vec![Block::Paragraph(vec![Inline::Strike(vec![t("x")])])]);
+        assert_eq!(markdown(&d), "~~x~~\n");
+    }
+
+    #[test]
     fn code_spans_and_fences_outgrow_the_backticks_inside() {
         assert_eq!(code_span("a`b"), "``a`b``");
         assert_eq!(code_span("`x"), "`` `x ``");
@@ -496,7 +555,10 @@ mod tests {
 
     #[test]
     fn lists_are_tight_and_numbered_in_order() {
-        let d = doc(Block::lists(vec![item(0, true, "one"), item(0, true, "two")]));
+        let d = doc(Block::lists(vec![
+            item(0, true, "one"),
+            item(0, true, "two"),
+        ]));
         assert_eq!(markdown(&d), "1. one\n2. two\n");
     }
 
@@ -537,7 +599,11 @@ mod tests {
 
     #[test]
     fn rule_is_three_dashes() {
-        let d = doc(vec![Block::paragraph("a"), Block::Rule, Block::paragraph("b")]);
+        let d = doc(vec![
+            Block::paragraph("a"),
+            Block::Rule,
+            Block::paragraph("b"),
+        ]);
         assert_eq!(markdown(&d), "a\n\n---\n\nb\n");
     }
 }

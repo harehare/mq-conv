@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use crate::converter::Converter;
+use crate::document::{Block, Builder, Document, Inline};
 use crate::error::{Error, Result};
 
 pub struct OrgConverter;
@@ -16,8 +17,7 @@ impl Converter for OrgConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        writer.write_all(convert_org(text).as_bytes())?;
-        Ok(())
+        parse_org(text).write_markdown(writer)
     }
 }
 
@@ -63,106 +63,71 @@ fn is_punct(c: char) -> bool {
     c.is_ascii_punctuation()
 }
 
-/// Converts a single-character toggle marker (Org's `*bold*`, `/italic/`, etc.) into a Markdown wrapper.
-fn convert_emphasis(s: &str, marker: char, open_wrap: &str, close_wrap: &str) -> String {
+/// The Markdown for an Org toggle marker around `content`.
+fn toggled(marker: char, content: &str) -> Inline {
+    match marker {
+        '*' => Inline::Strong(inline_org(content)),
+        '/' => Inline::Emphasis(inline_org(content)),
+        '+' => Inline::Strike(inline_org(content)),
+        _ => Inline::Code(content.to_string()),
+    }
+}
+
+/// Inline markup: `*bold*`, `/italic/`, `~code~`, `=verbatim=`, `+strike+` and `[[url][text]]`.
+fn inline_org(s: &str) -> Vec<Inline> {
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
-    let mut out = String::new();
+    let mut out = Vec::new();
+    let mut text = String::new();
+    let flush = |text: &mut String, out: &mut Vec<Inline>| {
+        if !text.is_empty() {
+            out.push(Inline::Text(std::mem::take(text)));
+        }
+    };
     let mut i = 0;
     while i < n {
         let c = chars[i];
-        if c == marker {
+        if c == '['
+            && i + 1 < n
+            && chars[i + 1] == '['
+            && let Some(close) = find_str(&chars, i, "]]")
+        {
+            let inner: String = chars[i + 2..close].iter().collect();
+            let (url, label) = match inner.find("][") {
+                Some(pos) => (inner[..pos].to_string(), inner[pos + 2..].to_string()),
+                None => (inner.clone(), inner),
+            };
+            flush(&mut text, &mut out);
+            out.push(Inline::Link {
+                url,
+                content: vec![Inline::Text(label)],
+            });
+            i = close + 2;
+            continue;
+        }
+        if matches!(c, '*' | '/' | '~' | '=' | '+') {
             let prev_ok = i == 0 || chars[i - 1].is_whitespace() || is_punct(chars[i - 1]);
             let next_ok = i + 1 < n && !chars[i + 1].is_whitespace();
             if prev_ok && next_ok {
-                let mut j = i + 1;
-                let mut found = None;
-                while j < n {
-                    if chars[j] == marker && !chars[j - 1].is_whitespace() {
-                        let after_ok =
-                            j + 1 == n || chars[j + 1].is_whitespace() || is_punct(chars[j + 1]);
-                        if after_ok {
-                            found = Some(j);
-                            break;
-                        }
-                    }
-                    j += 1;
-                }
-                if let Some(close) = found {
+                let close = (i + 1..n).find(|&j| {
+                    chars[j] == c
+                        && !chars[j - 1].is_whitespace()
+                        && (j + 1 == n || chars[j + 1].is_whitespace() || is_punct(chars[j + 1]))
+                });
+                if let Some(close) = close {
+                    flush(&mut text, &mut out);
                     let content: String = chars[i + 1..close].iter().collect();
-                    out.push_str(open_wrap);
-                    out.push_str(&content);
-                    out.push_str(close_wrap);
+                    out.push(toggled(c, &content));
                     i = close + 1;
                     continue;
                 }
             }
         }
-        out.push(c);
+        text.push(c);
         i += 1;
     }
+    flush(&mut text, &mut out);
     out
-}
-
-fn convert_org_links(s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let n = chars.len();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < n {
-        if chars[i] == '[' && i + 1 < n && chars[i + 1] == '['
-            && let Some(close) = find_str(&chars, i, "]]") {
-                let inner: String = chars[i + 2..close].iter().collect();
-                let (url, text) = if let Some(pos) = inner.find("][") {
-                    (inner[..pos].to_string(), inner[pos + 2..].to_string())
-                } else {
-                    (inner.clone(), inner.clone())
-                };
-                out.push('[');
-                out.push_str(&text);
-                out.push_str("](");
-                out.push_str(&url);
-                out.push(')');
-                i = close + 2;
-                continue;
-            }
-        out.push(chars[i]);
-        i += 1;
-    }
-    out
-}
-
-fn inline_org_to_md(s: &str) -> String {
-    let s = convert_org_links(s);
-    let s = convert_emphasis(&s, '*', "**", "**");
-    let s = convert_emphasis(&s, '/', "*", "*");
-    let s = convert_emphasis(&s, '~', "`", "`");
-    let s = convert_emphasis(&s, '=', "`", "`");
-    convert_emphasis(&s, '+', "~~", "~~")
-}
-
-fn render_table(rows: &[Vec<String>], out: &mut String) {
-    let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if cols == 0 {
-        return;
-    }
-    for (ri, row) in rows.iter().enumerate() {
-        out.push('|');
-        for c in 0..cols {
-            out.push(' ');
-            out.push_str(row.get(c).map(|s| s.as_str()).unwrap_or(""));
-            out.push_str(" |");
-        }
-        out.push('\n');
-        if ri == 0 {
-            out.push('|');
-            for _ in 0..cols {
-                out.push_str(" --- |");
-            }
-            out.push('\n');
-        }
-    }
-    out.push('\n');
 }
 
 fn is_special_org_line(line: &str) -> bool {
@@ -176,9 +141,20 @@ fn is_special_org_line(line: &str) -> bool {
         || (t.chars().all(|c| c == '-') && t.len() >= 5)
 }
 
-fn convert_org(text: &str) -> String {
+/// Lines up to the closing `#+end_...` marker, and the index after it.
+fn block_lines<'a>(lines: &[&'a str], start: usize, end_marker: &str) -> (Vec<&'a str>, usize) {
+    let mut i = start;
+    let mut body = Vec::new();
+    while i < lines.len() && !lines[i].trim().to_ascii_lowercase().starts_with(end_marker) {
+        body.push(lines[i]);
+        i += 1;
+    }
+    (body, i + 1)
+}
+
+fn parse_org(text: &str) -> Document {
     let lines: Vec<&str> = text.lines().collect();
-    let mut out = String::new();
+    let mut out = Builder::default();
     let mut i = 0;
 
     while i < lines.len() {
@@ -203,7 +179,10 @@ fn convert_org(text: &str) -> String {
             .strip_prefix("#+TITLE:")
             .or_else(|| trimmed.strip_prefix("#+title:"))
         {
-            out.push_str(&format!("# {}\n\n", inline_org_to_md(rest.trim())));
+            out.push(Block::Heading {
+                level: 1,
+                content: inline_org(rest.trim()),
+            });
             i += 1;
             continue;
         }
@@ -216,9 +195,10 @@ fn convert_org(text: &str) -> String {
             let stars = trimmed.chars().take_while(|&c| c == '*').count();
             let after = trimmed.as_bytes().get(stars).copied();
             if stars > 0 && after == Some(b' ') {
-                let level = stars.min(6);
-                let rest = trimmed[stars + 1..].trim();
-                out.push_str(&format!("{} {}\n\n", "#".repeat(level), inline_org_to_md(rest)));
+                out.push(Block::Heading {
+                    level: stars.min(6) as u8,
+                    content: inline_org(trimmed[stars + 1..].trim()),
+                });
                 i += 1;
                 continue;
             }
@@ -227,95 +207,75 @@ fn convert_org(text: &str) -> String {
         let lower = trimmed.to_ascii_lowercase();
         if lower.starts_with("#+begin_src") {
             let lang = trimmed[11..].trim();
-            out.push_str(&format!("```{lang}\n"));
-            i += 1;
-            while i < lines.len() && !lines[i].trim().to_ascii_lowercase().starts_with("#+end_src")
-            {
-                out.push_str(lines[i]);
-                out.push('\n');
-                i += 1;
-            }
-            out.push_str("```\n\n");
-            i += 1;
+            let (body, next) = block_lines(&lines, i + 1, "#+end_src");
+            out.push(Block::Code {
+                lang: (!lang.is_empty()).then(|| lang.to_string()),
+                text: body.join("\n"),
+            });
+            i = next;
             continue;
         }
         if lower.starts_with("#+begin_example") {
-            out.push_str("```\n");
-            i += 1;
-            while i < lines.len()
-                && !lines[i].trim().to_ascii_lowercase().starts_with("#+end_example")
-            {
-                out.push_str(lines[i]);
-                out.push('\n');
-                i += 1;
-            }
-            out.push_str("```\n\n");
-            i += 1;
+            let (body, next) = block_lines(&lines, i + 1, "#+end_example");
+            out.push(Block::Code {
+                lang: None,
+                text: body.join("\n"),
+            });
+            i = next;
             continue;
         }
         if lower.starts_with("#+begin_quote") {
-            i += 1;
-            while i < lines.len()
-                && !lines[i].trim().to_ascii_lowercase().starts_with("#+end_quote")
-            {
-                let l = lines[i];
-                if l.trim().is_empty() {
-                    out.push_str(">\n");
-                } else {
-                    out.push_str("> ");
-                    out.push_str(&inline_org_to_md(l.trim()));
-                    out.push('\n');
-                }
-                i += 1;
-            }
-            out.push('\n');
-            i += 1;
+            let (body, next) = block_lines(&lines, i + 1, "#+end_quote");
+            let paragraphs = body
+                .split(|l| l.trim().is_empty())
+                .filter(|p| !p.is_empty())
+                .map(|p| {
+                    let joined: Vec<&str> = p.iter().map(|l| l.trim()).collect();
+                    Block::Paragraph(inline_org(&joined.join(" ")))
+                })
+                .collect();
+            out.push(Block::Quote(paragraphs));
+            i = next;
             continue;
         }
 
         if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 5 {
-            out.push_str("---\n\n");
+            out.push(Block::Rule);
             i += 1;
             continue;
         }
 
         if trimmed.starts_with('|') {
-            let mut rows: Vec<Vec<String>> = Vec::new();
+            let mut rows: Vec<Vec<Vec<Inline>>> = Vec::new();
             while i < lines.len() && lines[i].trim().starts_with('|') {
                 let row_line = lines[i].trim();
+                i += 1;
                 if row_line.chars().all(|c| c == '|' || c == '-' || c == '+') {
-                    i += 1;
                     continue;
                 }
-                let cells: Vec<String> = row_line
-                    .trim_matches('|')
-                    .split('|')
-                    .map(|c| inline_org_to_md(c.trim()))
-                    .collect();
-                rows.push(cells);
-                i += 1;
+                rows.push(
+                    row_line
+                        .trim_matches('|')
+                        .split('|')
+                        .map(|c| inline_org(c.trim()))
+                        .collect(),
+                );
             }
-            render_table(&rows, &mut out);
+            out.push(Block::Table(rows));
             continue;
         }
 
-        let indent = indent_of(line);
+        let depth = indent_of(line) / 2;
         if let Some(rest) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("+ "))
         {
-            out.push_str(&"  ".repeat(indent / 2));
-            out.push_str("- ");
-            out.push_str(&inline_org_to_md(rest));
-            out.push('\n');
+            out.item(depth, false, inline_org(rest));
             i += 1;
             continue;
         }
         if let Some(rest) = strip_enum_marker(trimmed) {
-            out.push_str(&"  ".repeat(indent / 2));
-            out.push_str("1. ");
-            out.push_str(&inline_org_to_md(rest));
-            out.push('\n');
+            out.item(depth, true, inline_org(rest));
             i += 1;
             continue;
         }
@@ -326,46 +286,51 @@ fn convert_org(text: &str) -> String {
             para.push(lines[i].trim().to_string());
             i += 1;
         }
-        out.push_str(&inline_org_to_md(&para.join(" ")));
-        out.push_str("\n\n");
+        out.push(Block::Paragraph(inline_org(&para.join(" "))));
     }
 
-    out
+    out.finish()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn convert_org(text: &str) -> String {
+        let mut out = Vec::new();
+        parse_org(text).write_markdown(&mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
     #[test]
     fn test_headings() {
         let input = "* Top\n** Sub\nText\n";
         let out = convert_org(input);
         assert!(out.starts_with("# Top\n\n"));
-        assert!(out.contains("## Sub\n\n"));
+        assert!(out.contains("## Sub\n\nText\n"));
     }
 
     #[test]
     fn test_title_keyword() {
-        assert_eq!(convert_org("#+TITLE: Doc\n"), "# Doc\n\n");
+        assert_eq!(convert_org("#+TITLE: Doc\n"), "# Doc\n");
     }
 
     #[test]
     fn test_code_block() {
         let input = "#+BEGIN_SRC rust\nfn main() {}\n#+END_SRC\n";
-        assert_eq!(convert_org(input), "```rust\nfn main() {}\n```\n\n");
+        assert_eq!(convert_org(input), "```rust\nfn main() {}\n```\n");
     }
 
     #[test]
     fn test_quote_block() {
         let input = "#+BEGIN_QUOTE\nHello there\n#+END_QUOTE\n";
-        assert_eq!(convert_org(input), "> Hello there\n\n");
+        assert_eq!(convert_org(input), "> Hello there\n");
     }
 
     #[test]
     fn test_lists() {
         assert_eq!(convert_org("- one\n- two\n"), "- one\n- two\n");
-        assert_eq!(convert_org("1. one\n2. two\n"), "1. one\n1. two\n");
+        assert_eq!(convert_org("1. one\n2. two\n"), "1. one\n2. two\n");
     }
 
     #[test]
@@ -383,7 +348,7 @@ mod tests {
         let input = "| A | B |\n|---+---|\n| 1 | 2 |\n";
         let out = convert_org(input);
         assert!(out.contains("| A | B |"));
-        assert!(out.contains("| --- | --- |"));
+        assert!(out.contains("| - | - |"));
         assert!(out.contains("| 1 | 2 |"));
     }
 
@@ -393,11 +358,23 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_list_and_following_paragraph() {
+        let out = convert_org("- a\n  - a1\n- b\n\nAfter\n");
+        assert_eq!(out, "- a\n  - a1\n- b\n\nAfter\n");
+    }
+
+    #[test]
+    fn test_links_are_not_read_as_emphasis() {
+        let out = convert_org("see [[https://x.io/a/b/][a/b]] now\n");
+        assert_eq!(out, "see [a/b](https://x.io/a/b/) now\n");
+    }
+
+    #[test]
     fn test_converter_trait() {
         let converter = OrgConverter;
         let mut buf = Vec::new();
         converter.convert(b"* Title\n\nHello.\n", &mut buf).unwrap();
-        assert_eq!(String::from_utf8(buf).unwrap(), "# Title\n\nHello.\n\n");
+        assert_eq!(String::from_utf8(buf).unwrap(), "# Title\n\nHello.\n");
         assert_eq!(converter.format_name(), "org");
         assert_eq!(converter.output_extension(), "md");
     }

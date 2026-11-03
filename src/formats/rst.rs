@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use crate::converter::Converter;
-use crate::document::{Block, Document, FlatItem, Inline};
+use crate::document::{Block, Builder, Document, Inline};
 use crate::error::{Error, Result};
 
 pub struct RstConverter;
@@ -257,38 +257,6 @@ const ADMONITIONS: &[&str] = &[
     "hint",
 ];
 
-/// Collects blocks, flushing a run of list items as lists before any other block.
-#[derive(Default)]
-struct Builder {
-    doc: Document,
-    items: Vec<FlatItem>,
-}
-
-impl Builder {
-    fn flush(&mut self) {
-        let items = std::mem::take(&mut self.items);
-        self.doc.extend(Block::lists(items));
-    }
-
-    fn push(&mut self, block: Block) {
-        self.flush();
-        self.doc.push(block);
-    }
-
-    fn item(&mut self, depth: usize, ordered: bool, text: &str) {
-        self.items.push(FlatItem {
-            depth,
-            ordered,
-            content: inline_rst(text),
-        });
-    }
-
-    fn finish(mut self) -> Document {
-        self.flush();
-        self.doc
-    }
-}
-
 fn parse_rst(text: &str) -> Document {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Builder::default();
@@ -424,13 +392,13 @@ fn parse_rst(text: &str) -> Document {
             .or_else(|| trimmed.strip_prefix("- "))
             .or_else(|| trimmed.strip_prefix("+ "))
         {
-            out.item(base_indent / 3, false, rest.trim());
+            out.item(base_indent / 3, false, inline_rst(rest.trim()));
             i += 1;
             continue;
         }
 
         if let Some(rest) = strip_enum_marker(trimmed) {
-            out.item(base_indent / 3, true, rest.trim());
+            out.item(base_indent / 3, true, inline_rst(rest.trim()));
             i += 1;
             continue;
         }
@@ -564,7 +532,10 @@ mod tests {
 
     #[test]
     fn test_list_is_followed_by_a_blank_line() {
-        assert_eq!(convert_rst("* one\n* two\n\nAfter.\n"), "- one\n- two\n\nAfter.\n");
+        assert_eq!(
+            convert_rst("* one\n* two\n\nAfter.\n"),
+            "- one\n- two\n\nAfter.\n"
+        );
     }
 
     #[test]

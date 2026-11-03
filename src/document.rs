@@ -20,11 +20,14 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     /// A heading of level 1 to 6.
-    Heading {
-        level: u8,
-        content: Vec<Inline>,
-    },
+    Heading { level: u8, content: Vec<Inline> },
     Paragraph(Vec<Inline>),
+    /// Each item is a sequence of blocks; a nested list is a block of its item.
+    List { ordered: bool, items: Vec<Vec<Block>> },
+    /// Preformatted text, with an optional info string such as the language.
+    Code { lang: Option<String>, text: String },
+    Quote(Vec<Block>),
+    Rule,
     /// Rows of cells; the first row is the header.
     Table(Vec<Vec<Vec<Inline>>>),
 }
@@ -34,6 +37,19 @@ pub enum Block {
 pub enum Inline {
     Text(String),
     Emphasis(Vec<Inline>),
+    Strong(Vec<Inline>),
+    Code(String),
+    Link { url: String, content: Vec<Inline> },
+    Image { url: String, alt: String },
+}
+
+/// One line of a flat list, as most markup formats write them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlatItem {
+    /// Nesting depth, 0 for the outermost list.
+    pub depth: usize,
+    pub ordered: bool,
+    pub content: Vec<Inline>,
 }
 
 impl Block {
@@ -72,6 +88,47 @@ impl Block {
                 .collect(),
         )
     }
+
+    /// Lists from a run of flat items. A list ends where the kind (bullet or
+    /// numbered) changes at the same depth. An item deeper than the previous
+    /// one nests under it, and a jump of several levels counts as one.
+    pub fn lists(items: Vec<FlatItem>) -> Vec<Block> {
+        let mut items = items.into_iter().peekable();
+        let mut blocks = Vec::new();
+        while let Some(first) = items.peek() {
+            let base = first.depth;
+            blocks.push(Self::list_at(&mut items, base));
+        }
+        blocks
+    }
+
+    fn list_at(
+        items: &mut std::iter::Peekable<std::vec::IntoIter<FlatItem>>,
+        depth: usize,
+    ) -> Block {
+        let ordered = items.peek().is_some_and(|i| i.ordered);
+        let mut list_items: Vec<Vec<Block>> = Vec::new();
+        while let Some(item) = items.peek() {
+            if item.depth < depth || (item.depth == depth && item.ordered != ordered) {
+                break;
+            }
+            if item.depth > depth {
+                // Deeper than any item so far; attach to the last one.
+                let nested = Self::list_at(items, depth + 1);
+                match list_items.last_mut() {
+                    Some(last) => last.push(nested),
+                    None => list_items.push(vec![nested]),
+                }
+                continue;
+            }
+            let item = items.next().expect("peeked");
+            list_items.push(vec![Block::Paragraph(item.content)]);
+        }
+        Block::List {
+            ordered,
+            items: list_items,
+        }
+    }
 }
 
 impl Document {
@@ -83,16 +140,25 @@ impl Document {
         self.blocks.push(block);
     }
 
+    pub fn extend(&mut self, blocks: impl IntoIterator<Item = Block>) {
+        self.blocks.extend(blocks);
+    }
+
     /// Writes the document as Markdown, one blank line between blocks.
     pub fn write_markdown(&self, writer: &mut dyn Write) -> Result<()> {
-        for (i, block) in self.blocks.iter().enumerate() {
-            if i > 0 {
-                writeln!(writer)?;
-            }
-            write!(writer, "{}", render_block(block))?;
-        }
+        write!(writer, "{}", render_blocks(&self.blocks))?;
         Ok(())
     }
+}
+
+/// Blocks separated by one blank line, ending in a newline.
+fn render_blocks(blocks: &[Block]) -> String {
+    let rendered: Vec<String> = blocks
+        .iter()
+        .map(render_block)
+        .filter(|s| !s.is_empty())
+        .collect();
+    rendered.join("\n")
 }
 
 fn render_block(block: &Block) -> String {
@@ -102,8 +168,72 @@ fn render_block(block: &Block) -> String {
             format!("{} {}\n", "#".repeat(level), inlines(content, false))
         }
         Block::Paragraph(content) => format!("{}\n", inlines(content, false)),
+        Block::List { ordered, items } => render_list(*ordered, items),
+        Block::Code { lang, text } => render_code(lang.as_deref(), text),
+        Block::Quote(blocks) => render_quote(blocks),
+        Block::Rule => "---\n".to_string(),
         Block::Table(rows) => render_table(rows),
     }
+}
+
+fn render_list(ordered: bool, items: &[Vec<Block>]) -> String {
+    let mut out = String::new();
+    for (n, item) in items.iter().enumerate() {
+        let marker = if ordered {
+            format!("{}. ", n + 1)
+        } else {
+            "- ".to_string()
+        };
+        let indent = " ".repeat(marker.len());
+        // A nested list follows its paragraph directly; other blocks get a blank line.
+        let mut body = String::new();
+        for (i, block) in item.iter().enumerate() {
+            let tight = i > 0 && matches!(block, Block::List { .. });
+            if i > 0 && !tight {
+                body.push('\n');
+            }
+            body.push_str(&render_block(block));
+        }
+        for (i, line) in body.lines().enumerate() {
+            match (i, line.is_empty()) {
+                (0, _) => {
+                    out.push_str(&marker);
+                    out.push_str(line);
+                }
+                (_, true) => {}
+                (_, false) => {
+                    out.push_str(&indent);
+                    out.push_str(line);
+                }
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn render_code(lang: Option<&str>, text: &str) -> String {
+    let longest = text
+        .lines()
+        .map(|l| l.chars().take_while(|&c| c == '`').count())
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}{}\n{text}\n{fence}\n", lang.unwrap_or(""))
+}
+
+fn render_quote(blocks: &[Block]) -> String {
+    let mut out = String::new();
+    for line in render_blocks(blocks).lines() {
+        if line.is_empty() {
+            out.push_str(">\n");
+        } else {
+            out.push_str("> ");
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 fn render_table(rows: &[Vec<Vec<Inline>>]) -> String {
@@ -154,21 +284,66 @@ fn cell_values(content: &str) -> Vec<Node> {
 
 /// `in_cell` leaves `|` alone, since `mq-markdown` escapes it in table cells.
 fn inlines(content: &[Inline], in_cell: bool) -> String {
-    content
-        .iter()
-        .map(|inline| match inline {
-            Inline::Text(text) => escape(text, in_cell),
-            Inline::Emphasis(inner) => format!("*{}*", inlines(inner, in_cell)),
-        })
-        .collect()
+    let mut out = String::new();
+    for (i, inline) in content.iter().enumerate() {
+        // Text right after another inline still starts mid-line.
+        let at_start = i == 0;
+        match inline {
+            Inline::Text(text) => out.push_str(&escape(text, in_cell, at_start)),
+            Inline::Emphasis(inner) => out.push_str(&wrap("*", inner, in_cell)),
+            Inline::Strong(inner) => out.push_str(&wrap("**", inner, in_cell)),
+            Inline::Code(code) => out.push_str(&code_span(code)),
+            Inline::Link { url, content } => {
+                out.push_str(&format!("[{}]({})", inlines(content, in_cell), destination(url)));
+            }
+            Inline::Image { url, alt } => {
+                out.push_str(&format!("![{}]({})", escape(alt, in_cell, false), destination(url)));
+            }
+        }
+    }
+    out
+}
+
+fn wrap(mark: &str, inner: &[Inline], in_cell: bool) -> String {
+    let inner = inlines(inner, in_cell);
+    if inner.trim().is_empty() {
+        return inner;
+    }
+    format!("{mark}{inner}{mark}")
+}
+
+fn code_span(code: &str) -> String {
+    let mut longest = 0;
+    let mut run = 0;
+    for c in code.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    let pad = if code.starts_with('`') || code.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{code}{pad}{fence}")
+}
+
+/// A link target; wrapped in `<>` when it holds spaces or parentheses.
+fn destination(url: &str) -> String {
+    if url.contains([' ', '(', ')']) {
+        format!("<{}>", url.replace('<', "%3C").replace('>', "%3E"))
+    } else {
+        url.to_string()
+    }
 }
 
 /// Escapes what would otherwise change the meaning of the text. `_` is left
-/// alone inside words, where it is not emphasis.
-fn escape(text: &str, in_cell: bool) -> String {
+/// alone inside words, where it is not emphasis. `at_start` is whether the
+/// text begins a line, where block markers matter.
+fn escape(text: &str, in_cell: bool, at_start: bool) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
-    let mut line_start = true;
+    let mut line_start = at_start;
     for (i, &c) in chars.iter().enumerate() {
         let word = |j: Option<usize>| {
             j.and_then(|j| chars.get(j))
@@ -179,7 +354,7 @@ fn escape(text: &str, in_cell: bool) -> String {
             '|' => !in_cell,
             '_' => !(word(i.checked_sub(1)) && word(Some(i + 1))),
             '#' | '>' | '-' | '+' => line_start,
-            '.' | ')' => line_start_number(&chars, i),
+            '.' | ')' => leading_number(&chars, i, at_start),
             _ => false,
         };
         if escaped {
@@ -191,13 +366,13 @@ fn escape(text: &str, in_cell: bool) -> String {
     out
 }
 
-/// Whether the `.` or `)` at `i` ends a leading number, which would start a list.
-fn line_start_number(chars: &[char], i: usize) -> bool {
-    let start = chars[..i]
-        .iter()
-        .rposition(|&c| c == '\n')
-        .map_or(0, |p| p + 1);
-    let lead = &chars[start..i];
+/// Whether everything before `i` on its line is digits, so the `.` or `)` would start a list.
+fn leading_number(chars: &[char], i: usize, at_start: bool) -> bool {
+    let newline = chars[..i].iter().rposition(|&c| c == '\n');
+    if newline.is_none() && !at_start {
+        return false;
+    }
+    let lead = &chars[newline.map_or(0, |p| p + 1)..i];
     !lead.is_empty() && lead.iter().all(char::is_ascii_digit)
 }
 
@@ -213,6 +388,18 @@ mod tests {
 
     fn doc(blocks: Vec<Block>) -> Document {
         Document { blocks }
+    }
+
+    fn t(s: &str) -> Inline {
+        Inline::Text(s.to_string())
+    }
+
+    fn item(depth: usize, ordered: bool, text: &str) -> FlatItem {
+        FlatItem {
+            depth,
+            ordered,
+            content: vec![t(text)],
+        }
     }
 
     #[test]
@@ -266,16 +453,91 @@ mod tests {
     }
 
     #[test]
-    fn emphasis_wraps_its_content() {
-        assert_eq!(
-            markdown(&doc(vec![Block::emphasized("Empty sheet")])),
-            "*Empty sheet*\n"
-        );
-    }
-
-    #[test]
     fn an_empty_table_writes_nothing() {
         let rows: Vec<Vec<String>> = vec![];
         assert_eq!(markdown(&doc(vec![Block::text_table(&rows)])), "");
+    }
+
+    #[test]
+    fn inline_marks_nest_and_wrap_their_content() {
+        let d = doc(vec![Block::Paragraph(vec![
+            t("a "),
+            Inline::Strong(vec![t("b")]),
+            t(" "),
+            Inline::Emphasis(vec![t("c")]),
+            t(" "),
+            Inline::Code("d".into()),
+            t(" "),
+            Inline::Link {
+                url: "https://x.io".into(),
+                content: vec![t("e")],
+            },
+        ])]);
+        assert_eq!(markdown(&d), "a **b** *c* `d` [e](https://x.io)\n");
+    }
+
+    #[test]
+    fn code_spans_and_fences_outgrow_the_backticks_inside() {
+        assert_eq!(code_span("a`b"), "``a`b``");
+        assert_eq!(code_span("`x"), "`` `x ``");
+        let d = doc(vec![Block::Code {
+            lang: Some("md".into()),
+            text: "```\ninner\n```".into(),
+        }]);
+        assert_eq!(markdown(&d), "````md\n```\ninner\n```\n````\n");
+    }
+
+    #[test]
+    fn link_destinations_with_spaces_are_wrapped() {
+        assert_eq!(destination("a b"), "<a b>");
+        assert_eq!(destination("https://x.io/a(b)"), "<https://x.io/a(b)>");
+        assert_eq!(destination("https://x.io"), "https://x.io");
+    }
+
+    #[test]
+    fn lists_are_tight_and_numbered_in_order() {
+        let d = doc(Block::lists(vec![item(0, true, "one"), item(0, true, "two")]));
+        assert_eq!(markdown(&d), "1. one\n2. two\n");
+    }
+
+    #[test]
+    fn nested_items_indent_under_their_parent() {
+        let d = doc(Block::lists(vec![
+            item(0, false, "a"),
+            item(1, true, "a1"),
+            item(1, true, "a2"),
+            item(0, false, "b"),
+        ]));
+        assert_eq!(markdown(&d), "- a\n  1. a1\n  2. a2\n- b\n");
+    }
+
+    #[test]
+    fn a_change_of_kind_at_the_same_depth_starts_a_new_list() {
+        let d = doc(Block::lists(vec![item(0, false, "a"), item(0, true, "b")]));
+        assert_eq!(markdown(&d), "- a\n\n1. b\n");
+    }
+
+    #[test]
+    fn a_list_is_followed_by_a_blank_line() {
+        let d = doc(vec![
+            Block::lists(vec![item(0, false, "a")]).remove(0),
+            Block::paragraph("after"),
+        ]);
+        assert_eq!(markdown(&d), "- a\n\nafter\n");
+    }
+
+    #[test]
+    fn quotes_prefix_every_line_and_keep_blank_lines() {
+        let d = doc(vec![Block::Quote(vec![
+            Block::paragraph("one"),
+            Block::paragraph("two"),
+        ])]);
+        assert_eq!(markdown(&d), "> one\n>\n> two\n");
+    }
+
+    #[test]
+    fn rule_is_three_dashes() {
+        let d = doc(vec![Block::paragraph("a"), Block::Rule, Block::paragraph("b")]);
+        assert_eq!(markdown(&d), "a\n\n---\n\nb\n");
     }
 }

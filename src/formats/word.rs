@@ -62,6 +62,7 @@ fn parse_document(
     let mut in_table_row = false;
     let mut in_table_cell = false;
     let mut current: Vec<Inline> = Vec::new();
+    let mut list_counters: HashMap<(String, u32), usize> = HashMap::new();
     let mut current_style: Option<String> = None;
     let mut is_bold = false;
     let mut is_italic = false;
@@ -194,7 +195,15 @@ fn parse_document(
                                         .copied()
                                         .unwrap_or(false)
                                 });
-                                out.item(current_ilvl as usize, ordered, content);
+                                if ordered {
+                                    let key =
+                                        (current_num_id.clone().unwrap_or_default(), current_ilvl);
+                                    let n = list_counters.entry(key).or_insert(0);
+                                    *n += 1;
+                                    out.numbered_item(current_ilvl as usize, *n, content);
+                                } else {
+                                    out.item(current_ilvl as usize, false, content);
+                                }
                             } else if !content.is_empty() {
                                 out.push(Block::Paragraph(content));
                             }
@@ -564,6 +573,17 @@ mod tests {
         let body = r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>H</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>a|b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
         let out = convert(&make_docx(&doc_xml(body), None));
         assert!(out.contains("| a\\|b |"), "{out}");
+    }
+
+    #[test]
+    fn test_numbering_continues_after_an_interruption() {
+        let body = format!(
+            "{}<w:p><w:r><w:t>break</w:t></w:r></w:p>{}",
+            numbered_item("One", 1, 0),
+            numbered_item("Two", 1, 0)
+        );
+        let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
+        assert_eq!(convert(&docx), "1. One\n\nbreak\n\n2. Two\n");
     }
 
     #[test]

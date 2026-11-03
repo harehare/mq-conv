@@ -5,8 +5,8 @@
     </linearGradient>
     <clipPath id="card"><rect x="664" y="65" width="490" height="500" rx="8"/></clipPath>
   </defs>
-  <!-- Palette: ground #1f1a0c, panel #2e2711, line #4d4020, text #f5f0e1, muted #a89d7e, accent #F5C518 -->
-  <rect width="1200" height="630" fill="#1f1a0c"/>
+  <!-- Palette: ground #0e0e0e, panel #1a1a1a, line #2a2a2a, text #f2f2f2, muted #9a9a9a, accent #F5C518 -->
+  <rect width="1200" height="630" fill="#0e0e0e"/>
 
   <g transform="translate(40, 90) scale(1.5)" fill="none" stroke="url(#g)" stroke-linecap="round" stroke-linejoin="round">
     <path d="M6 42 L14 50 L6 58" stroke-width="6"/>
@@ -14,35 +14,35 @@
     <path d="M86 42 L94 50 L86 58" stroke-width="6"/>
     <path d="M28 34 L28 66 L36.25 66 L36.25 45.8 L47.25 66 L52.75 66 L63.75 45.8 L63.75 66 L72 66 L72 34 L62.8 34 L50 56.4 L37.2 34 Z" fill="url(#g)" stroke="none"/>
   </g>
-  <text x="206" y="206" font-family="'IBM Plex Mono', monospace" font-size="84" font-weight="700" letter-spacing="-2" fill="#f5f0e1">mq-conv</text>
+  <text x="206" y="206" font-family="'IBM Plex Mono', monospace" font-size="84" font-weight="700" letter-spacing="-2" fill="#f2f2f2">mq-conv</text>
 
-  <text x="60" y="300" font-family="'IBM Plex Mono', monospace" font-size="38" font-weight="700" fill="#f5f0e1">Any document,</text>
-  <text x="60" y="348" font-family="'IBM Plex Mono', monospace" font-size="38" font-weight="700" fill="#f5f0e1">as <tspan fill="#F5C518">Markdown.</tspan></text>
+  <text x="60" y="300" font-family="'IBM Plex Mono', monospace" font-size="38" font-weight="700" fill="#f2f2f2">Any document,</text>
+  <text x="60" y="348" font-family="'IBM Plex Mono', monospace" font-size="38" font-weight="700" fill="#f2f2f2">as <tspan fill="#F5C518">Markdown.</tspan></text>
 
-  <text x="60" y="414" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#a89d7e">PDF, Office, and more formats to structure-preserving</text>
-  <text x="60" y="442" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#a89d7e">Markdown. Offline, one binary, no API keys.</text>
+  <text x="60" y="414" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#9a9a9a">PDF, Office, and more formats to structure-preserving</text>
+  <text x="60" y="442" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#9a9a9a">Markdown. Offline, one binary, no API keys.</text>
 
-  <rect x="60.5" y="472.5" width="300" height="48" rx="4" fill="#2e2711" stroke="#4d4020"/>
+  <rect x="60.5" y="472.5" width="300" height="48" rx="4" fill="#1a1a1a" stroke="#2a2a2a"/>
   <text x="82" y="503" font-family="'IBM Plex Mono', monospace" font-size="17" fill="#F5C518">$</text>
-  <text x="102" y="503" font-family="'IBM Plex Mono', monospace" font-size="17" font-weight="500" fill="#f5f0e1">mq-conv report.pdf</text>
+  <text x="102" y="503" font-family="'IBM Plex Mono', monospace" font-size="17" font-weight="500" fill="#f2f2f2">mq-conv report.pdf</text>
 
-  <rect x="664.5" y="65.5" width="489" height="499" rx="8" fill="#2e2711" stroke="#4d4020"/>
+  <rect x="664.5" y="65.5" width="489" height="499" rx="8" fill="#1a1a1a" stroke="#2a2a2a"/>
   <g clip-path="url(#card)">
-    <text x="688" y="94" font-family="'IBM Plex Mono', monospace" font-size="14" fill="#a89d7e">report.pdf  →  report.md</text>
-    <line x1="664" y1="109.5" x2="1154" y2="109.5" stroke="#4d4020"/>
-    <g font-family="'IBM Plex Mono', monospace" font-size="20" fill="#f5f0e1">
+    <text x="688" y="94" font-family="'IBM Plex Mono', monospace" font-size="14" fill="#9a9a9a">report.pdf  →  report.md</text>
+    <line x1="664" y1="109.5" x2="1154" y2="109.5" stroke="#2a2a2a"/>
+    <g font-family="'IBM Plex Mono', monospace" font-size="20" fill="#f2f2f2">
       <text x="688" y="152" font-weight="700" fill="#F5C518"># Quarterly Report</text>
-      <text x="688" y="192" fill="#a89d7e">Revenue grew across all regions.</text>
+      <text x="688" y="192" fill="#9a9a9a">Revenue grew across all regions.</text>
       <text x="688" y="236" font-weight="700" fill="#F5C518">## Results</text>
-      <text x="688" y="280" fill="#a89d7e">| Region | Q1  | Q2  |</text>
-      <text x="688" y="308" fill="#a89d7e">| ------ | --- | --- |</text>
-      <text x="688" y="336" fill="#f5f0e1">| EMEA   | 1.2 | 1.5 |</text>
-      <text x="688" y="364" fill="#f5f0e1">| APAC   | 0.9 | 1.4 |</text>
+      <text x="688" y="280" fill="#9a9a9a">| Region | Q1  | Q2  |</text>
+      <text x="688" y="308" fill="#9a9a9a">| ------ | --- | --- |</text>
+      <text x="688" y="336" fill="#f2f2f2">| EMEA   | 1.2 | 1.5 |</text>
+      <text x="688" y="364" fill="#f2f2f2">| APAC   | 0.9 | 1.4 |</text>
     </g>
-    <rect x="664" y="420" width="490" height="145" fill="#151107"/>
+    <rect x="664" y="420" width="490" height="145" fill="#080808"/>
     <text x="688" y="456" font-family="'IBM Plex Mono', monospace" font-size="16" fill="#F5C518">$</text>
-    <text x="708" y="456" font-family="'IBM Plex Mono', monospace" font-size="16" fill="#f5f0e1">mq-conv report.pdf -q '.h2'</text>
-    <text x="688" y="496" font-family="'IBM Plex Mono', monospace" font-size="15" fill="#a89d7e">## Results</text>
+    <text x="708" y="456" font-family="'IBM Plex Mono', monospace" font-size="16" fill="#f2f2f2">mq-conv report.pdf -q '.h2'</text>
+    <text x="688" y="496" font-family="'IBM Plex Mono', monospace" font-size="15" fill="#9a9a9a">## Results</text>
     <rect x="688" y="512" width="9" height="16" fill="#F5C518"/>
   </g>
 </svg>

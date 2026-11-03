@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mq-conv: any document to Markdown</title>
+<meta name="description" content="mq-conv turns PDFs, Office docs and other formats into clean, structure-preserving Markdown. Offline, a single binary, no API keys.">
+<meta property="og:title" content="mq-conv: any document to Markdown">
+<meta property="og:description" content="PDF, Office and more formats to structure-preserving Markdown. Local and offline.">
+<meta property="og:image" content="https://conv.mqlang.org/assets/og-image.png">
+<meta property="og:url" content="https://conv.mqlang.org/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0e0e0e;--panel:#1a1a1a;--panel-hi:#2a2a2a;--deep:#080808;--fg:#f2f2f2;--muted:#9a9a9a;--accent:#F5C518;--bright:#FFD84D;--border:rgba(255,255,255,.1)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--bright);text-decoration:none}a:hover{text-decoration:underline}
+code{background:rgba(245,197,24,.12);color:var(--bright);padding:1px 6px;border-radius:2px;font-size:.9em}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+nav{position:sticky;top:0;z-index:10;background:rgba(14,14,14,.9);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+nav .wrap{display:flex;align-items:center;gap:20px;height:64px}
+nav .brand{display:flex;align-items:center;gap:8px;font:700 1.4rem "Space Grotesk",sans-serif;color:var(--bright);letter-spacing:-.02em}
+nav .brand:hover{text-decoration:none}
+nav .brand img{width:36px;height:36px}
+nav .sp{flex:1}
+nav a.link{color:var(--muted);font-size:.9rem}nav a.link:hover{color:var(--fg);text-decoration:none}
+.gh{width:18px;height:18px;vertical-align:-3px;margin-right:8px}
+.hero{padding:80px 0 56px}
+.hero .wrap{display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+.hero .wrap>*{min-width:0}
+.hero .wrap>div:first-child{width:100%;max-width:760px;margin:0 auto;text-align:center}
+.hero .wrap>.term{width:100%;max-width:1100px;margin:0 auto}
+.hero h1{font:700 clamp(2.4rem,5vw,4rem)/1.02 "Space Grotesk",sans-serif;letter-spacing:-.04em;margin:0 0 20px}
+.hero h1 span{color:var(--accent)}
+.hero p{color:var(--muted);font-size:1.15rem;margin:0 auto 28px;max-width:600px}
+.btn{display:inline-block;padding:10px 20px;border-radius:2px;border:1px solid var(--panel-hi);color:var(--fg);margin:0 8px 8px 0;transition:background-color .2s,border-color .2s,color .2s,transform .2s}
+.btn:hover{border-color:var(--accent);color:var(--accent);text-decoration:none;transform:translateY(-2px)}
+.btn:active{transform:scale(.98)}
+@media(prefers-reduced-motion:reduce){.btn{transition:none}.btn:hover{transform:none}}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--deep);font-weight:600}
+.btn.primary:hover{background:var(--panel);border-color:var(--accent);color:var(--accent)}
+.install{display:inline-block;max-width:100%;margin-top:8px;text-align:left}
+.term{background:var(--deep);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.term .bar{display:flex;gap:6px;padding:10px 14px;background:rgba(255,255,255,.04)}
+.term .bar i{width:12px;height:12px;border-radius:50%;background:var(--panel-hi)}
+.term .bar i:nth-child(1){background:#ef4444aa}.term .bar i:nth-child(2){background:#d4d4d4aa}.term .bar i:nth-child(3){background:#F5C518aa}
+.term pre{border:0;border-radius:0;background:transparent;padding:20px 22px}
+.c{color:var(--muted)}.y{color:var(--bright)}
+pre{background:var(--deep);border:1px solid var(--border);border-radius:8px;padding:18px;overflow:auto;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;color:#d4d4d4}
+section{padding:56px 0}
+.center{text-align:center;max-width:680px;margin:0 auto 40px}
+h2{font-size:2rem;margin:0 0 12px;letter-spacing:-.02em}
+.lead{color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px}
+.card{background:var(--panel);border-radius:8px;padding:22px;transition:background .2s}
+.card:hover{background:var(--panel-hi)}
+.card h3{margin:0 0 6px;font-size:1.05rem}
+.card p{margin:0;color:var(--muted);font-size:.95rem}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:32px;align-items:center}
+.two>*{min-width:0}
+footer{border-top:1px solid var(--border);padding:28px 0;color:var(--muted);font-size:.9rem;text-align:center}
+@media(max-width:860px){.hero{padding-top:48px}}
+@media(max-width:640px){
+.wrap{padding:0 16px}
+nav .wrap{gap:14px;height:56px}
+nav .brand{font-size:1.2rem}
+nav .brand img{width:28px;height:28px}
+nav a.link.gh-link span{display:none}
+nav .gh{margin-right:0}
+.hero{padding:36px 0 32px}
+.hero .wrap{gap:32px}
+.hero p{font-size:1.05rem}
+.btn{display:block;text-align:center;margin:0 0 10px}
+.install{display:block;font-size:12px;padding:14px;white-space:pre-wrap;word-break:break-all}
+pre{font-size:13px;padding:14px}
+section{padding:36px 0}
+h2{font-size:1.6rem}
+.center{margin-bottom:28px}
+}
+@media(max-width:420px){nav a.link[href="#features"]{display:none}}
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><img src="assets/logo.svg" alt="">mq-conv</a>
+    <a class="link" href="#features">Features</a>
+    <a class="link" href="#formats">Formats</a>
+    <span class="sp"></span>
+    <a class="link" href="book/">Documentation</a>
+    <a class="link" href="https://mqlang.org/">mq</a>
+    <a class="link gh-link" href="https://github.com/harehare/mq-conv" aria-label="GitHub"><svg class="gh" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg><span>GitHub</span></a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <h1>Any document,<br>as <span>Markdown.</span></h1>
+      <p>mq-conv turns PDFs, Office docs and other formats into structure-preserving Markdown. Local, offline, one binary.</p>
+      <a class="btn primary" href="book/start/quickstart.html">Get started</a>
+      <a class="btn" href="book/">Read the docs</a>
+      <a class="btn" href="https://github.com/harehare/mq-conv"><svg class="gh" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>View on GitHub</a>
+      <pre class="install">curl -fsSL https://raw.githubusercontent.com/harehare/mq-conv/main/bin/install.sh | bash</pre>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="y">$</span> mq-conv report.pdf --max-tokens 4000
+<span class="y"># Quarterly Report</span>
+
+Revenue grew across all regions.
+
+<span class="y">## Results</span>
+
+| Region | Q1  | Q2  |
+| ------ | --- | --- |
+| EMEA   | 1.2 | 1.5 |
+| APAC   | 0.9 | 1.4 |
+
+<span class="c">&lt;!-- mq-conv: next-cursor=18342 chunk-tokens=3921 total-tokens=187450 --&gt;</span>
+
+<span class="y">$</span> mq-conv report.pdf -q '.h2'
+<span class="y">## Results</span></pre>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap two">
+    <div>
+      <h2>Convert, then query</h2>
+      <p class="lead">Plain Markdown on stdout, ready to pipe into <a href="https://mqlang.org/">mq</a>. Slice a manual into sections, filter tables, or feed an LLM only what fits.</p>
+    </div>
+<pre># Pull one section out of a Word doc
+mq-conv document.docx | mq -A 'section::section("Summary")'
+
+# Sections small enough to paste into a prompt
+mq-conv manual.pdf -q '.h2 | select(tokens(.) &lt; 500)'
+
+# Only some pages, numbers stay those of the source
+mq-conv report.pdf --pages 3-5</pre>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="center"><h2>Features</h2><p class="lead">Structure from the file itself, not a text dump and not a cloud parser.</p></div>
+    <div class="grid">
+      <div class="card"><h3>Layout-aware PDF</h3><p>Native glyph parser: columns, headings, lists, ruled and borderless tables, CJK fonts. Running headers and footers removed.</p></div>
+      <div class="card"><h3>Local &amp; offline</h3><p>No API keys, no network, no Python or Node runtime. A single static binary.</p></div>
+      <div class="card"><h3>Parallel</h3><p>PDF pages and input files convert on all cores. A broken page never takes the document down.</p></div>
+      <div class="card"><h3>Token budgeting</h3><p><code>--max-tokens</code> and <code>--cursor</code> page through large documents at block boundaries.</p></div>
+      <div class="card"><h3>Built-in queries</h3><p><code>-q</code> runs an mq query with <code>tokens()</code>, <code>format()</code> and <code>filename()</code>.</p></div>
+      <div class="card"><h3>Page selection</h3><p><code>--pages</code> picks PDF pages, slides, sheets or EPUB chapters.</p></div>
+      <div class="card"><h3>Images &amp; OCR</h3><p><code>--extract-images</code> writes embedded images and links them; Tesseract OCR for scans.</p></div>
+      <div class="card"><h3>Any format out</h3><p><code>--to</code> writes any input as docx, HTML, LaTeX, RST, AsciiDoc, Org, EPUB or JSON.</p></div>
+      <div class="card"><h3>Modular &amp; WebAssembly</h3><p>Enable only the formats you need with feature flags; core formats also run in the browser.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="formats">
+  <div class="wrap">
+    <div class="center"><h2>Many formats</h2><p class="lead">Detected by extension and magic bytes.</p></div>
+    <div class="grid">
+      <div class="card"><h3>Documents</h3><p>PDF, Word, PowerPoint, EPUB</p></div>
+      <div class="card"><h3>Markup</h3><p>reStructuredText, Org-mode, MediaWiki, AsciiDoc</p></div>
+      <div class="card"><h3>Spreadsheets &amp; data</h3><p>Excel, SQLite</p></div>
+      <div class="card"><h3>Media &amp; archives</h3><p>Images, audio, video, ZIP, TAR</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    MIT licensed · Built on <a href="https://mqlang.org/">mq</a> ·
+    <a href="https://github.com/harehare/mq-conv">github.com/harehare/mq-conv</a>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# mq-conv
+
+> mq-conv converts PDFs, Office docs and other formats into structure-preserving Markdown, locally and offline, as a single binary. Built to feed mq (https://mqlang.org/). Supports layout-aware PDF parsing, token budgeting (--max-tokens, --cursor), page selection (--pages), built-in mq queries (-q), image extraction, OCR and writing any input as docx/HTML/LaTeX/EPUB (--to).
+
+## Docs
+
+- [Introduction](https://conv.mqlang.org/book/): Overview and features
+- [Install](https://conv.mqlang.org/book/start/install.html): install script, Cargo or source
+- [Quick Start](https://conv.mqlang.org/book/start/quickstart.html): convert a first file
+- [Supported Formats](https://conv.mqlang.org/book/guide/formats.html): input formats and --format values
+- [Queries](https://conv.mqlang.org/book/guide/queries.html): -q, tokens(), format(), filename()
+- [Combine with mq](https://conv.mqlang.org/book/guide/mq.html): piping into mq
+- [Token Budgeting](https://conv.mqlang.org/book/guide/tokens.html): --max-tokens, --cursor
+- [Page Selection](https://conv.mqlang.org/book/guide/pages.html): --pages
+- [Images and OCR](https://conv.mqlang.org/book/guide/images-ocr.html): --extract-images, --ocr-lang
+- [Other Output Formats](https://conv.mqlang.org/book/guide/markdown-out.html): --to
+- [How Conversion Works](https://conv.mqlang.org/book/guide/how-it-works.html): PDF and OOXML parsing
+- [CLI](https://conv.mqlang.org/book/reference/cli.html): all options
+- [Feature Flags](https://conv.mqlang.org/book/reference/features.html): per-format Cargo features
+- [WebAssembly](https://conv.mqlang.org/book/reference/wasm.html): browser builds

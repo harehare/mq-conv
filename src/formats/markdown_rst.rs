@@ -22,10 +22,12 @@ impl Converter for MarkdownRstConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-rst",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-rst",
+                message: e.to_string(),
+            })?;
 
         write_rst(&parsed.nodes, writer).map_err(|e| Error::Conversion {
             format: "markdown-rst",
@@ -143,7 +145,9 @@ fn write_rst(nodes: &[Node], writer: &mut dyn Write) -> std::io::Result<()> {
         match node {
             Node::Heading(h) => {
                 let text = extract_text(&h.values);
-                let underline = heading_char(h.depth.get()).to_string().repeat(text.chars().count().max(1));
+                let underline = heading_char(h.depth.get())
+                    .to_string()
+                    .repeat(text.chars().count().max(1));
                 writeln!(writer, "{text}")?;
                 writeln!(writer, "{underline}")?;
                 writeln!(writer)?;

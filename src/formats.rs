@@ -1,43 +1,32 @@
-#[cfg(any(feature = "json", feature = "toml_conv", feature = "yaml"))]
-pub mod structured;
-
 #[cfg(feature = "asciidoc")]
 pub mod asciidoc;
 #[cfg(feature = "audio")]
 pub mod audio;
-#[cfg(feature = "csv")]
-pub mod csv;
-#[cfg(any(feature = "csv", feature = "html"))]
-pub mod encoding;
 #[cfg(feature = "epub")]
 pub mod epub;
 #[cfg(feature = "excel")]
 pub mod excel;
-#[cfg(feature = "html")]
-pub mod html;
 #[cfg(feature = "image")]
 pub mod image;
-#[cfg(feature = "json")]
-pub mod json;
-pub mod media;
-#[cfg(feature = "markdown_docx")]
-pub mod markdown_docx;
-#[cfg(feature = "markdown_html")]
-pub mod markdown_html;
-#[cfg(feature = "markdown_text")]
-pub mod markdown_text;
-#[cfg(feature = "markdown_latex")]
-pub mod markdown_latex;
-#[cfg(feature = "markdown_rst")]
-pub mod markdown_rst;
 #[cfg(feature = "markdown_asciidoc")]
 pub mod markdown_asciidoc;
-#[cfg(feature = "markdown_org")]
-pub mod markdown_org;
+#[cfg(feature = "markdown_docx")]
+pub mod markdown_docx;
 #[cfg(feature = "markdown_epub_out")]
 pub mod markdown_epub_out;
+#[cfg(feature = "markdown_html")]
+pub mod markdown_html;
 #[cfg(feature = "markdown_json_ast")]
 pub mod markdown_json_ast;
+#[cfg(feature = "markdown_latex")]
+pub mod markdown_latex;
+#[cfg(feature = "markdown_org")]
+pub mod markdown_org;
+#[cfg(feature = "markdown_rst")]
+pub mod markdown_rst;
+#[cfg(feature = "markdown_text")]
+pub mod markdown_text;
+pub mod media;
 #[cfg(feature = "mediawiki")]
 pub mod mediawiki;
 #[cfg(feature = "ocr")]
@@ -54,16 +43,10 @@ pub mod rst;
 pub mod sqlite;
 #[cfg(feature = "tar")]
 pub mod tar;
-#[cfg(feature = "toml_conv")]
-pub mod toml_conv;
 #[cfg(feature = "video")]
 pub mod video;
 #[cfg(feature = "word")]
 pub mod word;
-#[cfg(feature = "xml")]
-pub mod xml;
-#[cfg(feature = "yaml")]
-pub mod yaml;
 #[cfg(feature = "zip")]
 pub mod zip;
 
@@ -112,36 +95,6 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(not(feature = "audio"))]
         Format::Audio => Err(crate::error::Error::FeatureDisabled("audio".into())),
 
-        #[cfg(feature = "csv")]
-        Format::Csv => Ok(Box::new(csv::CsvConverter)),
-        #[cfg(not(feature = "csv"))]
-        Format::Csv => Err(crate::error::Error::FeatureDisabled("csv".into())),
-
-        #[cfg(feature = "html")]
-        Format::Html => Ok(Box::new(html::HtmlConverter)),
-        #[cfg(not(feature = "html"))]
-        Format::Html => Err(crate::error::Error::FeatureDisabled("html".into())),
-
-        #[cfg(feature = "json")]
-        Format::Json => Ok(Box::new(json::JsonConverter)),
-        #[cfg(not(feature = "json"))]
-        Format::Json => Err(crate::error::Error::FeatureDisabled("json".into())),
-
-        #[cfg(feature = "yaml")]
-        Format::Yaml => Ok(Box::new(yaml::YamlConverter)),
-        #[cfg(not(feature = "yaml"))]
-        Format::Yaml => Err(crate::error::Error::FeatureDisabled("yaml".into())),
-
-        #[cfg(feature = "toml_conv")]
-        Format::Toml => Ok(Box::new(toml_conv::TomlConverter)),
-        #[cfg(not(feature = "toml_conv"))]
-        Format::Toml => Err(crate::error::Error::FeatureDisabled("toml".into())),
-
-        #[cfg(feature = "xml")]
-        Format::Xml => Ok(Box::new(xml::XmlConverter)),
-        #[cfg(not(feature = "xml"))]
-        Format::Xml => Err(crate::error::Error::FeatureDisabled("xml".into())),
-
         #[cfg(feature = "sqlite")]
         Format::Sqlite => Ok(Box::new(sqlite::SqliteConverter)),
         #[cfg(not(feature = "sqlite"))]
@@ -180,7 +133,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(feature = "markdown_latex")]
         Format::MarkdownLatex => Ok(Box::new(markdown_latex::MarkdownLatexConverter)),
         #[cfg(not(feature = "markdown_latex"))]
-        Format::MarkdownLatex => Err(crate::error::Error::FeatureDisabled("markdown-latex".into())),
+        Format::MarkdownLatex => Err(crate::error::Error::FeatureDisabled(
+            "markdown-latex".into(),
+        )),
 
         #[cfg(feature = "markdown_rst")]
         Format::MarkdownRst => Ok(Box::new(markdown_rst::MarkdownRstConverter)),
@@ -190,7 +145,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(feature = "markdown_asciidoc")]
         Format::MarkdownAsciidoc => Ok(Box::new(markdown_asciidoc::MarkdownAsciidocConverter)),
         #[cfg(not(feature = "markdown_asciidoc"))]
-        Format::MarkdownAsciidoc => Err(crate::error::Error::FeatureDisabled("markdown-asciidoc".into())),
+        Format::MarkdownAsciidoc => Err(crate::error::Error::FeatureDisabled(
+            "markdown-asciidoc".into(),
+        )),
 
         #[cfg(feature = "markdown_org")]
         Format::MarkdownOrg => Ok(Box::new(markdown_org::MarkdownOrgConverter)),
@@ -205,7 +162,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(feature = "markdown_json_ast")]
         Format::MarkdownJsonAst => Ok(Box::new(markdown_json_ast::MarkdownJsonAstConverter)),
         #[cfg(not(feature = "markdown_json_ast"))]
-        Format::MarkdownJsonAst => Err(crate::error::Error::FeatureDisabled("markdown-json-ast".into())),
+        Format::MarkdownJsonAst => Err(crate::error::Error::FeatureDisabled(
+            "markdown-json-ast".into(),
+        )),
 
         #[cfg(feature = "rst")]
         Format::Rst => Ok(Box::new(rst::RstConverter)),

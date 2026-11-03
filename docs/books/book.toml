@@ -1,0 +1,15 @@
+[book]
+authors = ["Takahiro Sato"]
+description = "mq-conv documentation: convert PDFs, Office docs and 20+ other formats to Markdown."
+language = "en"
+src = "src"
+title = "mq-conv — any document to Markdown"
+
+[output.html]
+additional-css = ["theme/custom.css"]
+default-theme = "navy"
+git-repository-url = "https://github.com/harehare/mq-conv"
+no-section-label = true
+preferred-dark-theme = "navy"
+site-url = "/book/"
+smart-punctuation = false

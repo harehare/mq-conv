@@ -4,6 +4,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::converter::{ConvertOptions, Converter};
+use crate::document::{Block, Builder, Document, Inline, trim_inlines};
 use crate::error::{Error, Result};
 use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
 
@@ -53,7 +54,7 @@ impl Converter for PowerPointConverter {
 
         // One writer for the whole deck so image names stay unique across slides.
         let mut media = MediaWriter::from_options(options);
-        let mut first_written = true;
+        let mut doc = Document::new();
 
         for (idx, slide_name) in slide_names.iter().enumerate() {
             // Slide numbers stay those of the deck, whatever `--pages` skips.
@@ -63,70 +64,57 @@ impl Converter for PowerPointConverter {
             let xml = read_entry(&mut archive, slide_name)?;
             let content = extract_slide_content(&xml)?;
 
-            if !std::mem::take(&mut first_written) {
-                writeln!(writer)?;
-                writeln!(writer, "---")?;
-                writeln!(writer)?;
+            if !doc.blocks.is_empty() {
+                doc.push(Block::Rule);
+            }
+            let mut slide = Builder::default();
+
+            // The first shape is the slide title when it looks like one.
+            let title = content.shapes.first().filter(|s| s.is_title);
+            match title {
+                Some(first) => slide.push(Block::Heading {
+                    level: 1,
+                    content: join_paragraphs(&first.paragraphs),
+                }),
+                None => slide.push(Block::heading(1, format!("Slide {}", idx + 1))),
             }
 
-            // Use first shape as slide title if it looks like a title
-            let mut title_written = false;
-            if let Some(first) = content.shapes.first()
-                && first.is_title {
-                    let text = join_paragraphs_inline(&first.paragraphs);
-                    writeln!(writer, "# {text}")?;
-                    writeln!(writer)?;
-                    title_written = true;
-                }
-
-            if !title_written {
-                writeln!(writer, "# Slide {}", idx + 1)?;
-                writeln!(writer)?;
-            }
-
-            let start = if title_written { 1 } else { 0 };
-            let content_shapes: Vec<_> = content.shapes[start..]
+            let content_shapes: Vec<_> = content.shapes[usize::from(title.is_some())..]
                 .iter()
                 .filter(|s| !s.paragraphs.is_empty())
                 .collect();
 
-            if content_shapes.is_empty() && content.tables.is_empty() && !title_written {
-                writeln!(writer, "*Empty slide*")?;
+            if content_shapes.is_empty() && content.tables.is_empty() && title.is_none() {
+                slide.push(Block::emphasized("Empty slide"));
             }
 
             for shape in &content_shapes {
                 if shape.is_subtitle {
-                    let text = join_paragraphs_inline(&shape.paragraphs);
+                    let text = join_paragraphs(&shape.paragraphs);
                     if !text.is_empty() {
-                        writeln!(writer, "## {text}")?;
-                        writeln!(writer)?;
+                        slide.push(Block::Heading {
+                            level: 2,
+                            content: text,
+                        });
                     }
-                } else {
-                    for para in &shape.paragraphs {
-                        let text = render_paragraph(para);
-                        let text = text.trim();
-                        if text.is_empty() {
-                            continue;
-                        }
-
-                        if para.has_bullet {
-                            let indent = "  ".repeat(para.level as usize);
-                            writeln!(writer, "{indent}- {text}")?;
-                        } else {
-                            writeln!(writer, "{text}")?;
-                            writeln!(writer)?;
-                        }
+                    continue;
+                }
+                for para in &shape.paragraphs {
+                    let mut text = paragraph_inlines(para);
+                    trim_inlines(&mut text);
+                    if text.is_empty() {
+                        continue;
                     }
-                    if shape.paragraphs.iter().any(|p| p.has_bullet) {
-                        writeln!(writer)?;
+                    if para.has_bullet {
+                        slide.item(para.level as usize, false, text);
+                    } else {
+                        slide.push(Block::Paragraph(text));
                     }
                 }
             }
 
-            // Write tables
             for table in &content.tables {
-                write_table(writer, table)?;
-                writeln!(writer)?;
+                slide.push(Block::text_table(table));
             }
 
             // Pictures (only when an image directory was requested)
@@ -136,36 +124,49 @@ impl Converter for PowerPointConverter {
                     let rels = parse_relationships(&rels_xml);
                     let images = extract_related_images(&mut archive, "ppt/slides/", &rels, media);
                     for id in slide_image_ids(&xml) {
-                        if let Some(path) = images.get(&id) {
-                            writeln!(writer, "![image]({path})")?;
-                            writeln!(writer)?;
+                        if let Some(url) = images.get(&id) {
+                            slide.push(Block::Paragraph(vec![Inline::Image {
+                                url: url.clone(),
+                                alt: "image".to_string(),
+                            }]));
                         }
                     }
                 }
             }
 
             // Speaker notes
-            let notes_name =
-                slide_name.replace("ppt/slides/slide", "ppt/notesSlides/notesSlide");
+            let notes_name = slide_name.replace("ppt/slides/slide", "ppt/notesSlides/notesSlide");
             if let Ok(notes_xml) = read_entry(&mut archive, &notes_name) {
-                let notes_content = extract_slide_content(&notes_xml)?;
-                let notes_text: String = notes_content
-                    .shapes
-                    .iter()
-                    .flat_map(|s| &s.paragraphs)
-                    .map(render_paragraph)
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !notes_text.is_empty() {
-                    writeln!(writer, "> **Notes**: {notes_text}")?;
-                    writeln!(writer)?;
+                let notes = extract_slide_content(&notes_xml)?;
+                let mut lines: Vec<Vec<Inline>> = Vec::new();
+                for para in notes.shapes.iter().flat_map(|s| &s.paragraphs) {
+                    let plain = plain_text(para);
+                    if plain.trim().is_empty() || plain.trim().chars().all(|c| c.is_ascii_digit()) {
+                        continue;
+                    }
+                    let mut text = paragraph_inlines(para);
+                    trim_inlines(&mut text);
+                    lines.push(text);
+                }
+                if !lines.is_empty() {
+                    let mut note = vec![
+                        Inline::Strong(vec![Inline::Text("Notes".to_string())]),
+                        Inline::Text(": ".to_string()),
+                    ];
+                    for (i, line) in lines.into_iter().enumerate() {
+                        if i > 0 {
+                            note.push(Inline::Break);
+                        }
+                        note.extend(line);
+                    }
+                    slide.push(Block::Quote(vec![Block::Paragraph(note)]));
                 }
             }
+
+            doc.extend(slide.finish().blocks);
         }
 
-        Ok(())
+        doc.write_markdown(writer)
     }
 }
 
@@ -198,7 +199,9 @@ fn slide_image_ids(xml: &str) -> Vec<String> {
     let mut reader = Reader::from_str(xml);
     loop {
         match reader.read_event() {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if local_name(e.name().as_ref()) == "blip" => {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e))
+                if local_name(e.name().as_ref()) == "blip" =>
+            {
                 if let Some(a) = e
                     .attributes()
                     .flatten()
@@ -214,26 +217,34 @@ fn slide_image_ids(xml: &str) -> Vec<String> {
     ids
 }
 
-fn render_paragraph(para: &Paragraph) -> String {
-    para.runs
-        .iter()
-        .map(|run| format_run_text(&run.text, run.bold, run.italic))
-        .collect::<String>()
+fn plain_text(para: &Paragraph) -> String {
+    para.runs.iter().map(|run| run.text.as_str()).collect()
 }
 
-fn join_paragraphs_inline(paragraphs: &[Paragraph]) -> String {
-    let mut out = String::new();
+fn paragraph_inlines(para: &Paragraph) -> Vec<Inline> {
+    para.runs
+        .iter()
+        .filter(|run| !run.text.is_empty())
+        .map(|run| Inline::styled(run.text.clone(), run.bold, run.italic))
+        .collect()
+}
+
+/// Paragraphs on one line, spaced apart except next to scripts written without spaces.
+fn join_paragraphs(paragraphs: &[Paragraph]) -> Vec<Inline> {
+    let mut out = Vec::new();
+    let mut last: Option<char> = None;
     for para in paragraphs {
-        let text = render_paragraph(para);
-        if text.is_empty() {
+        let text = plain_text(para);
+        let Some(next) = text.chars().next() else {
             continue;
-        }
-        if let (Some(prev), Some(next)) = (out.chars().next_back(), text.chars().next())
+        };
+        if let Some(prev) = last
             && !is_spaceless_boundary(prev, next)
         {
-            out.push(' ');
+            out.push(Inline::Text(" ".to_string()));
         }
-        out.push_str(&text);
+        out.extend(paragraph_inlines(para));
+        last = text.chars().last();
     }
     out
 }
@@ -253,18 +264,6 @@ fn is_spaceless_script(c: char) -> bool {
         | 0xF900..=0xFAFF
         | 0xFF00..=0xFFEF
     )
-}
-
-fn format_run_text(text: &str, bold: bool, italic: bool) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-    match (bold, italic) {
-        (true, true) => format!("***{text}***"),
-        (true, false) => format!("**{text}**"),
-        (false, true) => format!("*{text}*"),
-        (false, false) => text.to_string(),
-    }
 }
 
 fn extract_slide_content(xml: &str) -> Result<SlideContent> {
@@ -423,14 +422,8 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                 match local.as_str() {
                     "sp" | "pic" if !in_table => {
                         if in_shape && !paragraphs.is_empty() {
-                            let is_title = matches!(
-                                shape_type.as_str(),
-                                "title" | "ctrTitle"
-                            );
-                            let is_subtitle = matches!(
-                                shape_type.as_str(),
-                                "subTitle"
-                            );
+                            let is_title = matches!(shape_type.as_str(), "title" | "ctrTitle");
+                            let is_subtitle = matches!(shape_type.as_str(), "subTitle");
                             shapes.push(SlideShape {
                                 paragraphs: std::mem::take(&mut paragraphs),
                                 is_title,
@@ -505,51 +498,6 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
     let _ = in_rpr;
 
     Ok(SlideContent { shapes, tables })
-}
-
-fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-
-    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if col_count == 0 {
-        return Ok(());
-    }
-
-    // Header
-    let header = &rows[0];
-    write!(writer, "|")?;
-    for i in 0..col_count {
-        let cell = header.get(i).map(|s| s.as_str()).unwrap_or("");
-        write!(writer, " {} |", escape_cell(cell))?;
-    }
-    writeln!(writer)?;
-
-    // Separator
-    write!(writer, "|")?;
-    for _ in 0..col_count {
-        write!(writer, "---|")?;
-    }
-    writeln!(writer)?;
-
-    // Data
-    for row in rows.iter().skip(1) {
-        write!(writer, "|")?;
-        for i in 0..col_count {
-            let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            write!(writer, " {} |", escape_cell(cell))?;
-        }
-        writeln!(writer)?;
-    }
-
-    Ok(())
-}
-
-fn escape_cell(s: &str) -> String {
-    s.replace('|', "\\|")
-        .replace("\r\n", "<br>")
-        .replace('\n', "<br>")
 }
 
 fn read_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<String> {
@@ -771,10 +719,22 @@ mod tests {
         let xml = slide_xml(&tbl);
         let pptx = make_pptx(&[("ppt/slides/slide1.xml", &xml)]);
         let output = convert(&pptx);
-        assert!(output.contains("| Name | Age |"), "Missing header in:\n{output}");
-        assert!(output.contains("|---|"), "Missing separator in:\n{output}");
-        assert!(output.contains("| Alice | 30 |"), "Missing row in:\n{output}");
-        assert!(output.contains("| Bob | 25 |"), "Missing row in:\n{output}");
+        assert!(
+            output.contains("| Name  | Age |"),
+            "Missing header in:\n{output}"
+        );
+        assert!(
+            output.contains("| ----- | --- |"),
+            "Missing separator in:\n{output}"
+        );
+        assert!(
+            output.contains("| Alice | 30  |"),
+            "Missing row in:\n{output}"
+        );
+        assert!(
+            output.contains("| Bob   | 25  |"),
+            "Missing row in:\n{output}"
+        );
     }
 
     #[rstest]
@@ -789,6 +749,39 @@ mod tests {
         assert!(output.contains("# Slide One"));
         assert!(output.contains("---"));
         assert!(output.contains("# Slide Two"));
+    }
+
+    #[rstest]
+    fn test_speaker_notes_are_a_quote_with_breaks() {
+        let slide = slide_xml(&title_shape("Deck"));
+        let notes = slide_xml(&format!(
+            "{}{}",
+            body_shape("Say hello"),
+            body_shape("Then 2 * 3")
+        ));
+        let pptx = make_pptx(&[
+            ("ppt/slides/slide1.xml", &slide),
+            ("ppt/notesSlides/notesSlide1.xml", &notes),
+        ]);
+        assert_eq!(
+            convert(&pptx),
+            "# Deck\n\n> **Notes**: Say hello  \n> Then 2 \\* 3\n"
+        );
+    }
+
+    #[rstest]
+    fn test_list_then_paragraph_and_slide_break() {
+        let s1 = slide_xml(&format!(
+            "{}{}",
+            title_shape("A"),
+            bullet_shape(&["x", "y"])
+        ));
+        let s2 = slide_xml(&format!("{}{}", title_shape("B"), body_shape("text")));
+        let pptx = make_pptx(&[
+            ("ppt/slides/slide1.xml", &s1),
+            ("ppt/slides/slide2.xml", &s2),
+        ]);
+        assert_eq!(convert(&pptx), "# A\n\n- x\n- y\n\n---\n\n# B\n\ntext\n");
     }
 
     #[rstest]
@@ -891,7 +884,10 @@ mod tests {
     #[test]
     fn slides_with_same_named_images_keep_their_own_image() {
         let (s1, s2) = (pic_slide("rId1"), pic_slide("rId1"));
-        let (r1, r2) = (rels_to("../media/image1.png"), rels_to("../other/image1.png"));
+        let (r1, r2) = (
+            rels_to("../media/image1.png"),
+            rels_to("../other/image1.png"),
+        );
         let pptx = make_pptx(&[
             ("ppt/slides/slide1.xml", &s1),
             ("ppt/slides/_rels/slide1.xml.rels", &r1),
@@ -907,7 +903,10 @@ mod tests {
         assert_eq!(links.len(), 2, "{md}");
         assert_ne!(links[0], links[1], "both slides link one file:\n{md}");
         let read = |link: &str| std::fs::read_to_string(link).unwrap();
-        assert_eq!((read(&links[0]).as_str(), read(&links[1]).as_str()), ("CHART", "MAP"));
+        assert_eq!(
+            (read(&links[0]).as_str(), read(&links[1]).as_str()),
+            ("CHART", "MAP")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -961,7 +960,10 @@ mod tests {
         // slide is still called by its position in the deck.
         let out = convert_pages(&pptx, "3").unwrap();
         assert!(out.starts_with("# Slide 3"), "{out}");
-        assert!(out.contains("three") && !out.contains("two") && !out.contains("First"), "{out}");
+        assert!(
+            out.contains("three") && !out.contains("two") && !out.contains("First"),
+            "{out}"
+        );
 
         let out = convert_pages(&pptx, "1,3").unwrap();
         assert!(out.starts_with("# First"), "{out}");
@@ -971,7 +973,9 @@ mod tests {
 
     #[test]
     fn pages_outside_the_deck_are_an_error() {
-        let err = convert_pages(&three_slides(), "4-").unwrap_err().to_string();
+        let err = convert_pages(&three_slides(), "4-")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no slide matches"), "{err}");
     }
 }

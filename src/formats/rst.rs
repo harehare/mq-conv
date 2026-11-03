@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use crate::converter::Converter;
+use crate::document::{Block, Builder, Document, Inline};
 use crate::error::{Error, Result};
 
 pub struct RstConverter;
@@ -16,8 +17,7 @@ impl Converter for RstConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        writer.write_all(convert_rst(text).as_bytes())?;
-        Ok(())
+        parse_rst(text).write_markdown(writer)
     }
 }
 
@@ -94,7 +94,11 @@ fn collect_block(lines: &[&str], start: usize, base_indent: usize) -> (Vec<Strin
             break;
         }
     }
-    while collected.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+    while collected
+        .last()
+        .map(|l| l.trim().is_empty())
+        .unwrap_or(false)
+    {
         collected.pop();
     }
     (dedent(&collected), i)
@@ -137,32 +141,39 @@ fn find_seq(chars: &[char], from: usize, seq: &str) -> Option<usize> {
     None
 }
 
-fn inline_rst_to_md(input: &str) -> String {
+/// Inline markup: `**strong**`, `*emphasis*`, ``` ``code`` ``` and `` `text <url>`_ ``.
+/// Roles such as `:func:` and other interpreted text keep only their content.
+fn inline_rst(input: &str) -> Vec<Inline> {
     let chars: Vec<char> = input.chars().collect();
-    let mut out = String::new();
+    let mut out = Vec::new();
+    let mut text = String::new();
     let mut i = 0;
+    let flush = |text: &mut String, out: &mut Vec<Inline>| {
+        if !text.is_empty() {
+            out.push(Inline::Text(std::mem::take(text)));
+        }
+    };
     while i < chars.len() {
         // Strip role prefixes like :func:`foo` -> `foo`
         if chars[i] == ':'
-            && let Some(end) = chars[i + 1..].iter().position(|&c| c == ':') {
-                let role: String = chars[i + 1..i + 1 + end].iter().collect();
-                if !role.is_empty()
-                    && role.chars().all(|c| c.is_alphanumeric() || c == '_')
-                    && i + 1 + end + 1 < chars.len()
-                    && chars[i + 1 + end + 1] == '`'
-                {
-                    i += 1 + end + 1;
-                    continue;
-                }
+            && let Some(end) = chars[i + 1..].iter().position(|&c| c == ':')
+        {
+            let role: String = chars[i + 1..i + 1 + end].iter().collect();
+            if !role.is_empty()
+                && role.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && i + 1 + end + 1 < chars.len()
+                && chars[i + 1 + end + 1] == '`'
+            {
+                i += 1 + end + 1;
+                continue;
             }
+        }
 
         if chars[i] == '`' {
             if i + 1 < chars.len() && chars[i + 1] == '`' {
                 if let Some(close) = find_seq(&chars, i + 2, "``") {
-                    let content: String = chars[i + 2..close].iter().collect();
-                    out.push('`');
-                    out.push_str(&content);
-                    out.push('`');
+                    flush(&mut text, &mut out);
+                    out.push(Inline::Code(chars[i + 2..close].iter().collect()));
                     i = close + 2;
                     continue;
                 }
@@ -173,64 +184,63 @@ fn inline_rst_to_md(input: &str) -> String {
                 while j < chars.len() && chars[j] == '_' {
                     j += 1;
                 }
-                if let Some(lt) = content.rfind(" <")
-                    && content.ends_with('>') {
-                        let text = &content[..lt];
-                        let url = &content[lt + 2..content.len() - 1];
-                        out.push('[');
-                        out.push_str(text);
-                        out.push_str("](");
-                        out.push_str(url);
-                        out.push(')');
-                        i = j;
-                        continue;
-                    }
-                out.push_str(&content);
+                flush(&mut text, &mut out);
+                match content.rfind(" <").filter(|_| content.ends_with('>')) {
+                    Some(lt) => out.push(Inline::Link {
+                        url: content[lt + 2..content.len() - 1].to_string(),
+                        content: vec![Inline::Text(content[..lt].to_string())],
+                    }),
+                    None => text.push_str(&content),
+                }
                 i = j;
                 continue;
             }
         }
 
-        out.push(chars[i]);
+        if chars[i] == '*' {
+            let strong = chars.get(i + 1) == Some(&'*');
+            let mark = if strong { "**" } else { "*" };
+            let start = i + mark.len();
+            let opens = chars
+                .get(start)
+                .is_some_and(|c| !c.is_whitespace() && *c != '*');
+            let after_word = i > 0 && chars[i - 1].is_alphanumeric();
+            if opens
+                && !after_word
+                && let Some(close) = find_seq(&chars, start, mark)
+                && close > start
+                && !chars[close - 1].is_whitespace()
+            {
+                flush(&mut text, &mut out);
+                let inner = vec![Inline::Text(chars[start..close].iter().collect())];
+                out.push(if strong {
+                    Inline::Strong(inner)
+                } else {
+                    Inline::Emphasis(inner)
+                });
+                i = close + mark.len();
+                continue;
+            }
+        }
+
+        text.push(chars[i]);
         i += 1;
     }
+    flush(&mut text, &mut out);
     out
 }
 
-fn render_table(rows: &[Vec<String>], out: &mut String) {
-    let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if cols == 0 {
-        return;
-    }
-    for (ri, row) in rows.iter().enumerate() {
-        out.push('|');
-        for c in 0..cols {
-            out.push(' ');
-            out.push_str(row.get(c).map(|s| s.as_str()).unwrap_or(""));
-            out.push_str(" |");
-        }
-        out.push('\n');
-        if ri == 0 {
-            out.push('|');
-            for _ in 0..cols {
-                out.push_str(" --- |");
-            }
-            out.push('\n');
-        }
-    }
-    out.push('\n');
-}
-
-fn parse_list_table_rows(lines: &[&str]) -> Vec<Vec<String>> {
-    let mut rows: Vec<Vec<String>> = Vec::new();
+fn parse_list_table_rows(lines: &[&str]) -> Vec<Vec<Vec<Inline>>> {
+    let mut rows: Vec<Vec<Vec<Inline>>> = Vec::new();
     for raw in lines {
         let trimmed = raw.trim_start();
         if let Some(rest) = trimmed.strip_prefix("* - ") {
-            rows.push(vec![inline_rst_to_md(rest.trim())]);
+            rows.push(vec![inline_rst(rest.trim())]);
         } else if let Some(rest) = trimmed.strip_prefix("- ")
-            && let Some(last) = rows.last_mut() {
-                last.push(inline_rst_to_md(rest.trim()));
-            }
+            && let Some(last) = rows.last_mut()
+        {
+            last.push(inline_rst(rest.trim()));
+        }
     }
     rows
 }
@@ -247,9 +257,9 @@ const ADMONITIONS: &[&str] = &[
     "hint",
 ];
 
-fn convert_rst(text: &str) -> String {
+fn parse_rst(text: &str) -> Document {
     let lines: Vec<&str> = text.lines().collect();
-    let mut out = String::new();
+    let mut out = Builder::default();
     let mut i = 0;
     let mut heading_order: Vec<char> = Vec::new();
 
@@ -263,40 +273,39 @@ fn convert_rst(text: &str) -> String {
 
         if let Some(ch) = underline_char(line)
             && i + 2 < lines.len()
-                && let Some(ch2) = underline_char(lines[i + 2])
-                    && ch2 == ch
-                        && !lines[i + 1].trim().is_empty()
-                        && line.trim().chars().count() >= lines[i + 1].trim().chars().count()
-                    {
-                        let title = lines[i + 1].trim();
-                        let level = heading_level(&mut heading_order, ch);
-                        out.push_str(&format!(
-                            "{} {}\n\n",
-                            "#".repeat(level),
-                            inline_rst_to_md(title)
-                        ));
-                        i += 3;
-                        continue;
-                    }
+            && let Some(ch2) = underline_char(lines[i + 2])
+            && ch2 == ch
+            && !lines[i + 1].trim().is_empty()
+            && line.trim().chars().count() >= lines[i + 1].trim().chars().count()
+        {
+            let title = lines[i + 1].trim();
+            let level = heading_level(&mut heading_order, ch);
+            out.push(Block::Heading {
+                level: level as u8,
+                content: inline_rst(title),
+            });
+            i += 3;
+            continue;
+        }
 
         if i + 1 < lines.len()
-            && let Some(ch) = underline_char(lines[i + 1]) {
-                let title_len = line.trim_end().chars().count();
-                let underline_len = lines[i + 1].trim_end().chars().count();
-                if title_len > 0 && underline_len >= title_len {
-                    let level = heading_level(&mut heading_order, ch);
-                    out.push_str(&format!(
-                        "{} {}\n\n",
-                        "#".repeat(level),
-                        inline_rst_to_md(line.trim())
-                    ));
-                    i += 2;
-                    continue;
-                }
+            && let Some(ch) = underline_char(lines[i + 1])
+        {
+            let title_len = line.trim_end().chars().count();
+            let underline_len = lines[i + 1].trim_end().chars().count();
+            if title_len > 0 && underline_len >= title_len {
+                let level = heading_level(&mut heading_order, ch);
+                out.push(Block::Heading {
+                    level: level as u8,
+                    content: inline_rst(line.trim()),
+                });
+                i += 2;
+                continue;
             }
+        }
 
         if underline_char(line).is_some() && line.trim().chars().count() >= 4 {
-            out.push_str("---\n\n");
+            out.push(Block::Rule);
             i += 1;
             continue;
         }
@@ -311,12 +320,10 @@ fn convert_rst(text: &str) -> String {
             {
                 let lang = lang_part.trim();
                 let (block, next_i) = collect_block(&lines, i + 1, base_indent);
-                out.push_str(&format!("```{lang}\n"));
-                for l in &block {
-                    out.push_str(l);
-                    out.push('\n');
-                }
-                out.push_str("```\n\n");
+                out.push(Block::Code {
+                    lang: (!lang.is_empty()).then(|| lang.to_string()),
+                    text: block.join("\n"),
+                });
                 i = next_i;
                 continue;
             }
@@ -328,15 +335,15 @@ fn convert_rst(text: &str) -> String {
                     .map(|s| s.as_str())
                     .filter(|l| !l.trim_start().starts_with(':'))
                     .collect();
-                let rows = parse_list_table_rows(&rows_lines);
-                render_table(&rows, &mut out);
+                out.push(Block::Table(parse_list_table_rows(&rows_lines)));
                 i = next_i;
                 continue;
             }
 
-            let admonition = ADMONITIONS
-                .iter()
-                .find_map(|adm| rest.strip_prefix(&format!("{adm}::")).map(|after| (*adm, after)));
+            let admonition = ADMONITIONS.iter().find_map(|adm| {
+                rest.strip_prefix(&format!("{adm}::"))
+                    .map(|after| (*adm, after))
+            });
             if let Some((adm, after)) = admonition {
                 let (block, next_i) = collect_block(&lines, i + 1, base_indent);
                 let mut label_chars = adm.chars();
@@ -344,23 +351,19 @@ fn convert_rst(text: &str) -> String {
                     Some(c) => c.to_uppercase().collect::<String>() + label_chars.as_str(),
                     None => String::new(),
                 };
-                out.push_str(&format!("> **{label}:**"));
+                let mut first = vec![Inline::Strong(vec![Inline::Text(format!("{label}:"))])];
                 let after_trim = after.trim();
                 if !after_trim.is_empty() {
-                    out.push(' ');
-                    out.push_str(&inline_rst_to_md(after_trim));
+                    first.push(Inline::Text(" ".to_string()));
+                    first.extend(inline_rst(after_trim));
                 }
-                out.push('\n');
-                for l in &block {
-                    if l.trim().is_empty() {
-                        out.push_str(">\n");
-                    } else {
-                        out.push_str("> ");
-                        out.push_str(&inline_rst_to_md(l));
-                        out.push('\n');
+                let mut quote = vec![Block::Paragraph(first)];
+                for paragraph in block.split(|l| l.trim().is_empty()) {
+                    if !paragraph.is_empty() {
+                        quote.push(Block::Paragraph(inline_rst(&paragraph.join(" "))));
                     }
                 }
-                out.push('\n');
+                out.push(Block::Quote(quote));
                 i = next_i;
                 continue;
             }
@@ -369,7 +372,10 @@ fn convert_rst(text: &str) -> String {
                 .strip_prefix("image::")
                 .or_else(|| rest.strip_prefix("figure::"))
             {
-                out.push_str(&format!("![]({})\n\n", path.trim()));
+                out.push(Block::Paragraph(vec![Inline::Image {
+                    url: path.trim().to_string(),
+                    alt: String::new(),
+                }]));
                 let (_block, next_i) = collect_block(&lines, i + 1, base_indent);
                 i = next_i;
                 continue;
@@ -386,21 +392,13 @@ fn convert_rst(text: &str) -> String {
             .or_else(|| trimmed.strip_prefix("- "))
             .or_else(|| trimmed.strip_prefix("+ "))
         {
-            let depth = base_indent / 3;
-            out.push_str(&"  ".repeat(depth));
-            out.push_str("- ");
-            out.push_str(&inline_rst_to_md(rest.trim()));
-            out.push('\n');
+            out.item(base_indent / 3, false, inline_rst(rest.trim()));
             i += 1;
             continue;
         }
 
         if let Some(rest) = strip_enum_marker(trimmed) {
-            let depth = base_indent / 3;
-            out.push_str(&"  ".repeat(depth));
-            out.push_str("1. ");
-            out.push_str(&inline_rst_to_md(rest.trim()));
-            out.push('\n');
+            out.item(base_indent / 3, true, inline_rst(rest.trim()));
             i += 1;
             continue;
         }
@@ -411,15 +409,14 @@ fn convert_rst(text: &str) -> String {
             if !block.is_empty() {
                 let text = stripped.trim();
                 if !text.is_empty() {
-                    out.push_str(&inline_rst_to_md(text));
-                    out.push_str(":\n\n");
+                    let mut content = inline_rst(text);
+                    content.push(Inline::Text(":".to_string()));
+                    out.push(Block::Paragraph(content));
                 }
-                out.push_str("```\n");
-                for l in &block {
-                    out.push_str(l);
-                    out.push('\n');
-                }
-                out.push_str("```\n\n");
+                out.push(Block::Code {
+                    lang: None,
+                    text: block.join("\n"),
+                });
                 i = next_i;
                 continue;
             }
@@ -436,15 +433,15 @@ fn convert_rst(text: &str) -> String {
             para_lines.push(lines[i].trim().to_string());
             i += 1;
         }
-        let para = para_lines.join(" ");
-        if base_indent > 0 {
-            out.push_str("> ");
-        }
-        out.push_str(&inline_rst_to_md(&para));
-        out.push_str("\n\n");
+        let paragraph = Block::Paragraph(inline_rst(&para_lines.join(" ")));
+        out.push(if base_indent > 0 {
+            Block::Quote(vec![paragraph])
+        } else {
+            paragraph
+        });
     }
 
-    out
+    out.finish()
 }
 
 #[cfg(test)]
@@ -452,8 +449,14 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
+    fn convert_rst(text: &str) -> String {
+        let mut out = Vec::new();
+        parse_rst(text).write_markdown(&mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
     #[rstest]
-    #[case("Title\n=====\n\nBody text.\n", "# Title\n\nBody text.\n\n")]
+    #[case("Title\n=====\n\nBody text.\n", "# Title\n\nBody text.\n")]
     fn test_heading(#[case] input: &str, #[case] expected: &str) {
         assert_eq!(convert_rst(input), expected);
     }
@@ -470,14 +473,14 @@ mod tests {
     fn test_code_block_directive() {
         let input = ".. code-block:: rust\n\n   fn main() {}\n";
         let out = convert_rst(input);
-        assert_eq!(out, "```rust\nfn main() {}\n```\n\n");
+        assert_eq!(out, "```rust\nfn main() {}\n```\n");
     }
 
     #[test]
     fn test_literal_block() {
         let input = "Example::\n\n    foo bar\n";
         let out = convert_rst(input);
-        assert_eq!(out, "Example:\n\n```\nfoo bar\n```\n\n");
+        assert_eq!(out, "Example:\n\n```\nfoo bar\n```\n");
     }
 
     #[test]
@@ -489,7 +492,7 @@ mod tests {
     #[test]
     fn test_enumerated_list() {
         let input = "#. one\n#. two\n";
-        assert_eq!(convert_rst(input), "1. one\n1. two\n");
+        assert_eq!(convert_rst(input), "1. one\n2. two\n");
     }
 
     #[test]
@@ -504,10 +507,11 @@ mod tests {
 
     #[test]
     fn test_list_table() {
-        let input = ".. list-table::\n   :header-rows: 1\n\n   * - A\n     - B\n   * - 1\n     - 2\n";
+        let input =
+            ".. list-table::\n   :header-rows: 1\n\n   * - A\n     - B\n   * - 1\n     - 2\n";
         let out = convert_rst(input);
         assert!(out.contains("| A | B |"));
-        assert!(out.contains("| --- | --- |"));
+        assert!(out.contains("| - | - |"));
         assert!(out.contains("| 1 | 2 |"));
     }
 
@@ -527,6 +531,25 @@ mod tests {
     }
 
     #[test]
+    fn test_list_is_followed_by_a_blank_line() {
+        assert_eq!(
+            convert_rst("* one\n* two\n\nAfter.\n"),
+            "- one\n- two\n\nAfter.\n"
+        );
+    }
+
+    #[test]
+    fn test_nested_lists() {
+        let input = "* one\n\n   #. a\n   #. b\n\n* two\n";
+        assert_eq!(convert_rst(input), "- one\n  1. a\n  2. b\n- two\n");
+    }
+
+    #[test]
+    fn test_unmatched_asterisk_is_kept_as_text() {
+        assert_eq!(convert_rst("2 * 3 = 6\n"), "2 \\* 3 = 6\n");
+    }
+
+    #[test]
     fn test_converter_trait() {
         let converter = RstConverter;
         let mut buf = Vec::new();
@@ -534,7 +557,7 @@ mod tests {
             .convert(b"Title\n=====\n\nHello.\n", &mut buf)
             .unwrap();
         let out = String::from_utf8(buf).unwrap();
-        assert_eq!(out, "# Title\n\nHello.\n\n");
+        assert_eq!(out, "# Title\n\nHello.\n");
         assert_eq!(converter.format_name(), "rst");
         assert_eq!(converter.output_extension(), "md");
     }

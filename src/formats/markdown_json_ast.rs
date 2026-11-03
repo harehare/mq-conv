@@ -22,10 +22,12 @@ impl Converter for MarkdownJsonAstConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-json-ast",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-json-ast",
+                message: e.to_string(),
+            })?;
 
         let json = parsed.to_json().map_err(|e| Error::Conversion {
             format: "markdown-json-ast",

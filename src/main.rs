@@ -6,7 +6,7 @@ use clap::{Parser, ValueEnum};
 use miette::IntoDiagnostic;
 
 use mq_conv::budget;
-use mq_conv::converter::{ConvertOptions, PageRanges};
+use mq_conv::converter::{ConvertOptions, Converter, PageRanges};
 use mq_conv::detect::Format;
 use mq_conv::formats::media::relative_path;
 use mq_conv::parallel::par_map;
@@ -26,7 +26,7 @@ struct Args {
     #[arg(short, long)]
     output_dir: Option<PathBuf>,
 
-    /// Target output format when converting from Markdown
+    /// Write this format instead of Markdown (any input is converted through Markdown)
     #[arg(long)]
     to: Option<ToArg>,
 
@@ -76,12 +76,6 @@ enum FormatArg {
     Zip,
     Epub,
     Audio,
-    Csv,
-    Html,
-    Json,
-    Yaml,
-    Toml,
-    Xml,
     Sqlite,
     Tar,
     Video,
@@ -133,12 +127,6 @@ impl From<FormatArg> for Format {
             FormatArg::Zip => Format::Zip,
             FormatArg::Epub => Format::Epub,
             FormatArg::Audio => Format::Audio,
-            FormatArg::Csv => Format::Csv,
-            FormatArg::Html => Format::Html,
-            FormatArg::Json => Format::Json,
-            FormatArg::Yaml => Format::Yaml,
-            FormatArg::Toml => Format::Toml,
-            FormatArg::Xml => Format::Xml,
             FormatArg::Sqlite => Format::Sqlite,
             FormatArg::Tar => Format::Tar,
             FormatArg::Video => Format::Video,
@@ -148,21 +136,6 @@ impl From<FormatArg> for Format {
             FormatArg::Org => Format::Org,
             FormatArg::Mediawiki => Format::MediaWiki,
             FormatArg::Asciidoc => Format::Asciidoc,
-        }
-    }
-}
-
-fn resolve_output_format(detected: Format, forced_to: Option<&ToArg>) -> miette::Result<Format> {
-    match forced_to {
-        None => Ok(detected),
-        Some(to) => {
-            if detected == Format::MarkdownDocx {
-                Ok(to.clone().into())
-            } else {
-                Err(miette::miette!(
-                    "--to is only valid for Markdown (.md) input files"
-                ))
-            }
         }
     }
 }
@@ -211,20 +184,28 @@ fn convert_bytes(
             "--pages is only valid for PDF, PowerPoint, Excel and EPUB input"
         ));
     }
-    let format = resolve_output_format(detected, args.to.as_ref())?;
-    let converter =
-        resolve_converter(format, &args.ocr_lang).map_err(|e| miette::miette!("{e}"))?;
-
     let options = ConvertOptions {
         image_dir,
         image_link_dir,
         ocr_lang: Some(args.ocr_lang.clone()),
         pages: args.pages.clone(),
     };
-    let mut bytes = Vec::new();
-    converter
-        .convert_with(input, &mut bytes, &options)
-        .map_err(|e| miette::miette!("{e}"))?;
+    let convert = |format: Format, input: &[u8]| -> miette::Result<(Vec<u8>, Box<dyn Converter>)> {
+        let converter =
+            resolve_converter(format, &args.ocr_lang).map_err(|e| miette::miette!("{e}"))?;
+        let mut bytes = Vec::new();
+        converter
+            .convert_with(input, &mut bytes, &options)
+            .map_err(|e| miette::miette!("{e}"))?;
+        Ok((bytes, converter))
+    };
+    // With `--to`, any input is converted to Markdown first (Markdown input is
+    // already that) and then written in the target format.
+    let (mut bytes, converter) = match args.to.as_ref() {
+        None => convert(detected, input)?,
+        Some(to) if detected == Format::MarkdownDocx => convert(to.clone().into(), input)?,
+        Some(to) => convert(to.clone().into(), &convert(detected, input)?.0)?,
+    };
     #[cfg(feature = "query")]
     if let Some(query) = args.query.as_deref() {
         if converter.output_extension() != "md" {

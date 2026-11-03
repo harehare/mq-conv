@@ -5,8 +5,9 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::converter::{ConvertOptions, Converter};
-use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
+use crate::document::{Block, Builder, Document, Inline, trim_inlines};
 use crate::error::{Error, Result};
+use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
 
 pub struct WordConverter;
 
@@ -41,68 +42,9 @@ impl Converter for WordConverter {
             .map(|xml| parse_numbering(&xml))
             .unwrap_or_default();
         let document_xml = read_entry(&mut archive, "word/document.xml")?;
-        let paragraphs = parse_document(&document_xml, &rels, &numbering, &images)?;
 
-        let mut first = true;
-        for para in &paragraphs {
-            match para {
-                Paragraph::Heading(level, text) => {
-                    if !first {
-                        writeln!(writer)?;
-                    }
-                    let hashes = "#".repeat(*level as usize);
-                    writeln!(writer, "{hashes} {text}")?;
-                }
-                Paragraph::Text(text) => {
-                    if !text.is_empty() {
-                        if !first {
-                            writeln!(writer)?;
-                        }
-                        writeln!(writer, "{text}")?;
-                    }
-                }
-                Paragraph::ListItem { text, level, marker } => {
-                    let indent = "  ".repeat(*level as usize);
-                    match marker {
-                        ListMarker::Bullet => writeln!(writer, "{indent}- {text}")?,
-                        ListMarker::Ordered(n) => writeln!(writer, "{indent}{n}. {text}")?,
-                    }
-                }
-                Paragraph::BlockQuote(text) => {
-                    if !first {
-                        writeln!(writer)?;
-                    }
-                    writeln!(writer, "> {text}")?;
-                }
-                Paragraph::Table(rows) => {
-                    if !first {
-                        writeln!(writer)?;
-                    }
-                    write_table(writer, rows)?;
-                }
-            }
-            first = false;
-        }
-
-        Ok(())
+        parse_document(&document_xml, &rels, &numbering, &images)?.write_markdown(writer)
     }
-}
-
-enum Paragraph {
-    Heading(u8, String),
-    Text(String),
-    ListItem {
-        text: String,
-        level: u32,
-        marker: ListMarker,
-    },
-    BlockQuote(String),
-    Table(Vec<Vec<String>>),
-}
-
-enum ListMarker {
-    Bullet,
-    Ordered(u32),
 }
 
 fn parse_document(
@@ -110,8 +52,8 @@ fn parse_document(
     rels: &HashMap<String, String>,
     numbering: &HashMap<(String, u32), bool>,
     images: &HashMap<String, String>,
-) -> Result<Vec<Paragraph>> {
-    let mut paragraphs = Vec::new();
+) -> Result<Document> {
+    let mut out = Builder::default();
     let mut reader = Reader::from_str(xml);
 
     let mut in_paragraph = false;
@@ -119,19 +61,19 @@ fn parse_document(
     let mut in_table = false;
     let mut in_table_row = false;
     let mut in_table_cell = false;
-    let mut current_text = String::new();
+    let mut current: Vec<Inline> = Vec::new();
+    let mut list_counters: HashMap<(String, u32), usize> = HashMap::new();
     let mut current_style: Option<String> = None;
     let mut is_bold = false;
     let mut is_italic = false;
     let mut is_list_item = false;
     let mut current_ilvl: u32 = 0;
     let mut current_num_id: Option<String> = None;
-    let mut list_counters: HashMap<(String, u32), u32> = HashMap::new();
-    let mut table_rows: Vec<Vec<String>> = Vec::new();
-    let mut table_row: Vec<String> = Vec::new();
-    let mut cell_text = String::new();
+    let mut table_rows: Vec<Vec<Vec<Inline>>> = Vec::new();
+    let mut table_row: Vec<Vec<Inline>> = Vec::new();
+    let mut cell: Vec<Inline> = Vec::new();
     let mut hyperlink_target: Option<String> = None;
-    let mut hyperlink_buf = String::new();
+    let mut hyperlink_buf: Vec<Inline> = Vec::new();
     let mut in_hyperlink = false;
 
     loop {
@@ -140,11 +82,11 @@ fn parse_document(
                 let local = local_name(e.name().as_ref());
                 match local.as_str() {
                     "p" => {
-                        if in_table_cell && !cell_text.is_empty() {
-                            cell_text.push_str("<br>");
+                        if in_table_cell && !cell.is_empty() {
+                            cell.push(Inline::Break);
                         }
                         in_paragraph = true;
-                        current_text.clear();
+                        current.clear();
                         current_style = None;
                         is_bold = false;
                         is_italic = false;
@@ -154,11 +96,11 @@ fn parse_document(
                     }
                     "r" => in_run = true,
                     "blip" => {
-                        if let Some(md) = embedded_image(&e, images) {
+                        if let Some(image) = embedded_image(&e, images) {
                             if in_table_cell {
-                                cell_text.push_str(&md);
+                                cell.push(image);
                             } else if in_paragraph {
-                                current_text.push_str(&md);
+                                current.push(image);
                             }
                         }
                     }
@@ -181,7 +123,7 @@ fn parse_document(
                     }
                     "tc" => {
                         in_table_cell = true;
-                        cell_text.clear();
+                        cell.clear();
                     }
                     _ => {}
                 }
@@ -197,11 +139,11 @@ fn parse_document(
                         }
                     }
                     "blip" => {
-                        if let Some(md) = embedded_image(&e, images) {
+                        if let Some(image) = embedded_image(&e, images) {
                             if in_table_cell {
-                                cell_text.push_str(&md);
+                                cell.push(image);
                             } else if in_paragraph {
-                                current_text.push_str(&md);
+                                current.push(image);
                             }
                         }
                     }
@@ -222,13 +164,13 @@ fn parse_document(
                 if in_run || in_table_cell {
                     let text = e.to_string();
                     if in_table_cell {
-                        cell_text.push_str(&text);
-                    } else if in_paragraph {
-                        let formatted = format_run_text(&text, is_bold, is_italic);
+                        cell.push(Inline::Text(text));
+                    } else if in_paragraph && !text.is_empty() {
+                        let run = Inline::styled(text, is_bold, is_italic);
                         if in_hyperlink {
-                            hyperlink_buf.push_str(&formatted);
+                            hyperlink_buf.push(run);
                         } else {
-                            current_text.push_str(&formatted);
+                            current.push(run);
                         }
                     }
                 }
@@ -238,44 +180,33 @@ fn parse_document(
                 match local.as_str() {
                     "p" => {
                         if !in_table_cell && in_paragraph {
-                            let list_item = |list_counters: &mut HashMap<(String, u32), u32>| {
+                            let content = std::mem::take(&mut current);
+                            let heading = current_style.as_deref().and_then(heading_level);
+                            let quote = current_style.as_deref().is_some_and(is_blockquote);
+                            let is_list = is_list_item && heading.is_none() && !quote;
+                            if let Some(level) = heading {
+                                out.push(Block::Heading { level, content });
+                            } else if quote {
+                                out.push(Block::Quote(vec![Block::Paragraph(content)]));
+                            } else if is_list {
                                 let ordered = current_num_id.as_deref().is_some_and(|id| {
                                     numbering
                                         .get(&(id.to_string(), current_ilvl))
                                         .copied()
                                         .unwrap_or(false)
                                 });
-                                let marker = if ordered {
+                                if ordered {
                                     let key =
                                         (current_num_id.clone().unwrap_or_default(), current_ilvl);
                                     let n = list_counters.entry(key).or_insert(0);
                                     *n += 1;
-                                    ListMarker::Ordered(*n)
+                                    out.numbered_item(current_ilvl as usize, *n, content);
                                 } else {
-                                    ListMarker::Bullet
-                                };
-                                Paragraph::ListItem {
-                                    text: current_text.clone(),
-                                    level: current_ilvl,
-                                    marker,
+                                    out.item(current_ilvl as usize, false, content);
                                 }
-                            };
-                            let para = if let Some(ref style) = current_style {
-                                if let Some(level) = heading_level(style) {
-                                    Paragraph::Heading(level, current_text.clone())
-                                } else if is_blockquote(style) {
-                                    Paragraph::BlockQuote(current_text.clone())
-                                } else if is_list_item {
-                                    list_item(&mut list_counters)
-                                } else {
-                                    Paragraph::Text(current_text.clone())
-                                }
-                            } else if is_list_item {
-                                list_item(&mut list_counters)
-                            } else {
-                                Paragraph::Text(current_text.clone())
-                            };
-                            paragraphs.push(para);
+                            } else if !content.is_empty() {
+                                out.push(Block::Paragraph(content));
+                            }
                         }
                         in_paragraph = false;
                     }
@@ -286,11 +217,10 @@ fn parse_document(
                     }
                     "hyperlink" => {
                         if in_hyperlink && !in_table_cell {
+                            let content = std::mem::take(&mut hyperlink_buf);
                             match hyperlink_target.take() {
-                                Some(target) => {
-                                    current_text.push_str(&format!("[{hyperlink_buf}]({target})"))
-                                }
-                                None => current_text.push_str(&hyperlink_buf),
+                                Some(url) => current.push(Inline::Link { url, content }),
+                                None => current.extend(content),
                             }
                         }
                         in_hyperlink = false;
@@ -298,8 +228,9 @@ fn parse_document(
                         hyperlink_target = None;
                     }
                     "tc" => {
-                        table_row.push(cell_text.trim().to_string());
-                        cell_text.clear();
+                        let mut done = std::mem::take(&mut cell);
+                        trim_inlines(&mut done);
+                        table_row.push(done);
                         in_table_cell = false;
                     }
                     "tr" => {
@@ -309,7 +240,7 @@ fn parse_document(
                     }
                     "tbl" => {
                         if !table_rows.is_empty() {
-                            paragraphs.push(Paragraph::Table(table_rows.clone()));
+                            out.push(Block::Table(table_rows.clone()));
                         }
                         table_rows.clear();
                         in_table = false;
@@ -332,21 +263,24 @@ fn parse_document(
     let _ = in_table;
     let _ = in_table_row;
 
-    Ok(paragraphs)
+    Ok(out.finish())
 }
 
-/// `![image](path)` for a `a:blip r:embed="rIdN"` element, if that image was extracted.
+/// The image for a `a:blip r:embed="rIdN"` element, if that image was extracted.
 fn embedded_image(
     e: &quick_xml::events::BytesStart,
     images: &HashMap<String, String>,
-) -> Option<String> {
+) -> Option<Inline> {
     let id = e
         .attributes()
         .flatten()
         .find(|a| a.key.as_ref() == "r:embed" || a.key.as_ref() == "embed")
         .map(|a| a.value.to_string())?;
-    let path = images.get(&id)?;
-    Some(format!("![image]({path})"))
+    let url = images.get(&id)?.clone();
+    Some(Inline::Image {
+        url,
+        alt: "image".to_string(),
+    })
 }
 
 fn attr_value(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
@@ -412,63 +346,6 @@ fn parse_numbering(xml: &str) -> HashMap<(String, u32), bool> {
         }
     }
     result
-}
-
-fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-
-    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if col_count == 0 {
-        return Ok(());
-    }
-
-    // Header
-    let header = &rows[0];
-    write!(writer, "|")?;
-    for i in 0..col_count {
-        let cell = header.get(i).map(|s| s.as_str()).unwrap_or("");
-        write!(writer, " {} |", escape_cell(cell))?;
-    }
-    writeln!(writer)?;
-
-    // Separator
-    write!(writer, "|")?;
-    for _ in 0..col_count {
-        write!(writer, "---|")?;
-    }
-    writeln!(writer)?;
-
-    // Data
-    for row in rows.iter().skip(1) {
-        write!(writer, "|")?;
-        for i in 0..col_count {
-            let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            write!(writer, " {} |", escape_cell(cell))?;
-        }
-        writeln!(writer)?;
-    }
-
-    Ok(())
-}
-
-fn escape_cell(s: &str) -> String {
-    s.replace('|', "\\|")
-        .replace("\r\n", "<br>")
-        .replace('\n', "<br>")
-}
-
-fn format_run_text(text: &str, bold: bool, italic: bool) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-    match (bold, italic) {
-        (true, true) => format!("***{text}***"),
-        (true, false) => format!("**{text}**"),
-        (false, true) => format!("*{text}*"),
-        (false, false) => text.to_string(),
-    }
 }
 
 fn is_blockquote(style: &str) -> bool {
@@ -658,7 +535,11 @@ mod tests {
 
     #[test]
     fn test_nested_list_item_is_indented() {
-        let body = format!("{}{}", numbered_item("Top", 1, 0), numbered_item("Sub", 1, 1));
+        let body = format!(
+            "{}{}",
+            numbered_item("Top", 1, 0),
+            numbered_item("Sub", 1, 1)
+        );
         let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
         let out = convert(&docx);
         assert!(out.contains("1. Top"), "{out}");
@@ -671,6 +552,38 @@ mod tests {
         let docx = make_docx(&doc_xml(body), None);
         let out = convert(&docx);
         assert!(out.contains("Line one<br>Line two"), "{out}");
+    }
+
+    #[test]
+    fn test_list_is_followed_by_a_blank_line_and_text_is_escaped() {
+        let body = format!(
+            "{}{}<w:p><w:r><w:t>2 * 3 and 1. not a list</w:t></w:r></w:p>",
+            numbered_item("One", 2, 0),
+            numbered_item("Two", 2, 0)
+        );
+        let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
+        assert_eq!(
+            convert(&docx),
+            "- One\n- Two\n\n2 \\* 3 and 1. not a list\n"
+        );
+    }
+
+    #[test]
+    fn test_table_cells_escape_pipes_once() {
+        let body = r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>H</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>a|b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        let out = convert(&make_docx(&doc_xml(body), None));
+        assert!(out.contains("| a\\|b |"), "{out}");
+    }
+
+    #[test]
+    fn test_numbering_continues_after_an_interruption() {
+        let body = format!(
+            "{}<w:p><w:r><w:t>break</w:t></w:r></w:p>{}",
+            numbered_item("One", 1, 0),
+            numbered_item("Two", 1, 0)
+        );
+        let docx = make_docx_with_numbering(&doc_xml(&body), NUMBERING_XML);
+        assert_eq!(convert(&docx), "1. One\n\nbreak\n\n2. Two\n");
     }
 
     #[test]
@@ -695,15 +608,21 @@ mod tests {
         let docx = zip.finish().unwrap().into_inner();
 
         let dir = std::env::temp_dir().join(format!("mq-conv-docx-{}", std::process::id()));
-        let options = ConvertOptions { image_dir: Some(dir.clone()), ..Default::default() };
+        let options = ConvertOptions {
+            image_dir: Some(dir.clone()),
+            ..Default::default()
+        };
         let mut out = Vec::new();
-        WordConverter.convert_with(&docx, &mut out, &options).unwrap();
+        WordConverter
+            .convert_with(&docx, &mut out, &options)
+            .unwrap();
         let md = String::from_utf8(out).unwrap();
 
         let image_line = format!("![image]({})", dir.join("image1.png").to_string_lossy());
         let (before, img, after) = (
             md.find("Before").unwrap(),
-            md.find(&image_line).unwrap_or_else(|| panic!("no image link in:\n{md}")),
+            md.find(&image_line)
+                .unwrap_or_else(|| panic!("no image link in:\n{md}")),
             md.find("After").unwrap(),
         );
         assert!(before < img && img < after, "image out of place:\n{md}");

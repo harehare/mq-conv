@@ -1,0 +1,132 @@
+/* mq-conv book theme: the landing page's near-black palette and yellow accent.
+   Sidebar, menu bar and content share one background so the page reads as a single surface. */
+
+:root {
+  --mq-accent: #F5C518;
+  --mq-accent-bright: #FFD84D;
+  --content-max-width: 860px;
+}
+
+/* Light */
+.light,
+html:not(.js) {
+  --bg: #ffffff;
+  --fg: #151107;
+  --sidebar-bg: #ffffff;
+  --sidebar-fg: #3a3015;
+  --sidebar-non-existent: #a89d7e;
+  --sidebar-active: #8a6a00;
+  --sidebar-spacer: #efe7cc;
+  --scrollbar: #d9cfa8;
+  --icons: #8d835f;
+  --icons-hover: #8a6a00;
+  --links: #8a6a00;
+  --inline-code-color: #8a6a00;
+  --theme-popup-bg: #ffffff;
+  --theme-popup-border: #d9cfa8;
+  --theme-hover: #f8f4e4;
+  --quote-bg: #f8f4e4;
+  --quote-border: #F5C518;
+  --table-border-color: #efe7cc;
+  --table-header-bg: #f8f4e4;
+  --table-alternate-bg: #fbf8ec;
+  --searchbar-border-color: #d9cfa8;
+  --searchbar-bg: #ffffff;
+  --searchbar-fg: #151107;
+  --searchresults-header-fg: #8d835f;
+  --searchresults-border-color: #efe7cc;
+  --searchresults-li-bg: #f8f4e4;
+  --search-mark-bg: #fbe58a;
+}
+
+/* Dark themes: navy is the default, the rest follow the same rule (sidebar == content) */
+.navy,
+.coal,
+.ayu {
+  --bg: #0e0e0e;
+  --fg: #f2f2f2;
+  --sidebar-bg: #0e0e0e;
+  --sidebar-fg: #d4d4d4;
+  --sidebar-non-existent: #6f6f6f;
+  --sidebar-active: var(--mq-accent-bright);
+  --sidebar-spacer: #1a1a1a;
+  --scrollbar: #2a2a2a;
+  --icons: #9a9a9a;
+  --icons-hover: var(--mq-accent-bright);
+  --links: var(--mq-accent-bright);
+  --inline-code-color: var(--mq-accent-bright);
+  --theme-popup-bg: #141414;
+  --theme-popup-border: #2a2a2a;
+  --theme-hover: #1a1a1a;
+  --quote-bg: #141414;
+  --quote-border: var(--mq-accent);
+  --table-border-color: #2a2a2a;
+  --table-header-bg: #1a1a1a;
+  --table-alternate-bg: #121212;
+  --searchbar-border-color: #2a2a2a;
+  --searchbar-bg: #141414;
+  --searchbar-fg: #f2f2f2;
+  --searchresults-header-fg: #9a9a9a;
+  --searchresults-border-color: #2a2a2a;
+  --searchresults-li-bg: #141414;
+  --search-mark-bg: #8a6a00;
+}
+
+html,
+body {
+  background-color: var(--bg);
+  color: var(--fg);
+}
+
+#menu-bar,
+#menu-bar-sticky-container {
+  background-color: var(--bg);
+  border-bottom-color: var(--sidebar-spacer);
+}
+
+.sidebar {
+  background-color: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-spacer);
+}
+
+.sidebar .sidebar-resize-handle {
+  background-color: transparent;
+}
+
+.chapter li.chapter-item a.active {
+  color: var(--sidebar-active);
+  font-weight: 600;
+}
+
+/* Code: one step darker than the page in dark themes, one step lighter in light */
+pre,
+.content pre > code,
+pre > .buttons {
+  background-color: #080808;
+}
+.light pre,
+.light .content pre > code {
+  background-color: #f8f4e4;
+}
+pre {
+  border: 1px solid var(--sidebar-spacer);
+  border-radius: 8px;
+}
+:not(pre) > code {
+  background-color: rgba(245, 197, 24, 0.12);
+  border-radius: 4px;
+}
+
+.content a {
+  color: var(--links);
+}
+.content main {
+  max-width: var(--content-max-width);
+}
+code.hljs,
+pre code {
+  font-size: 0.9em;
+}
+table {
+  width: 100%;
+}

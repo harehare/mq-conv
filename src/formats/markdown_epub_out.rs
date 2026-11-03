@@ -27,10 +27,12 @@ impl Converter for MarkdownEpubConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-epub",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-epub",
+                message: e.to_string(),
+            })?;
 
         build_epub(&parsed, writer).map_err(|e| Error::Conversion {
             format: "markdown-epub",
@@ -44,9 +46,10 @@ impl Converter for MarkdownEpubConverter {
 fn extract_heading_text(nodes: &[Node]) -> Option<String> {
     for node in nodes {
         if let Node::Heading(h) = node
-            && h.depth == 1 {
-                return Some(extract_text(&h.values));
-            }
+            && h.depth == 1
+        {
+            return Some(extract_text(&h.values));
+        }
     }
     None
 }
@@ -77,12 +80,13 @@ fn split_into_chapters(nodes: &[Node]) -> Vec<(String, Vec<&Node>)> {
 
     for node in nodes {
         if let Node::Heading(h) = node
-            && h.depth == 1 {
-                if !current_nodes.is_empty() || !chapters.is_empty() {
-                    chapters.push((current_title.clone(), std::mem::take(&mut current_nodes)));
-                }
-                current_title = extract_text(&h.values);
+            && h.depth == 1
+        {
+            if !current_nodes.is_empty() || !chapters.is_empty() {
+                chapters.push((current_title.clone(), std::mem::take(&mut current_nodes)));
             }
+            current_title = extract_text(&h.values);
+        }
         current_nodes.push(node);
     }
 
@@ -179,9 +183,11 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn build_epub(parsed: &Markdown, writer: &mut dyn Write) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let title = extract_heading_text(&parsed.nodes)
-        .unwrap_or_else(|| "Untitled".to_string());
+fn build_epub(
+    parsed: &Markdown,
+    writer: &mut dyn Write,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let title = extract_heading_text(&parsed.nodes).unwrap_or_else(|| "Untitled".to_string());
 
     let chapters = split_into_chapters(&parsed.nodes);
 

@@ -22,10 +22,12 @@ impl Converter for MarkdownLatexConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-latex",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-latex",
+                message: e.to_string(),
+            })?;
 
         write_latex(&parsed.nodes, writer).map_err(|e| Error::Conversion {
             format: "markdown-latex",

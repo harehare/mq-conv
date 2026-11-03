@@ -292,10 +292,10 @@ fn test_ruled_table() {
         page += &text("F1", 10, 125, y, b);
     }
     let out = convert(&make_pdf(&[&page], "[0 0 300 300]", None));
-    assert!(out.contains("| Name | Age |"), "{out}");
-    assert!(out.contains("| --- | --- |"), "{out}");
-    assert!(out.contains("| Alice | 30 |"), "{out}");
-    assert!(out.contains("| Bob | 41 |"), "{out}");
+    assert!(out.contains("| Name  | Age |"), "{out}");
+    assert!(out.contains("| ----- | --- |"), "{out}");
+    assert!(out.contains("| Alice | 30  |"), "{out}");
+    assert!(out.contains("| Bob   | 41  |"), "{out}");
 }
 
 #[test]
@@ -314,8 +314,8 @@ fn test_borderless_table_from_aligned_columns() {
         page += &text("F1", 10, 200, y, c);
     }
     let out = convert(&make_pdf(&[&page], "[0 0 300 300]", None));
-    assert!(out.contains("| Item | Qty | Price |"), "{out}");
-    assert!(out.contains("| Apple | 3 | 1.20 |"), "{out}");
+    assert!(out.contains("| Item  | Qty | Price |"), "{out}");
+    assert!(out.contains("| Apple | 3   | 1.20  |"), "{out}");
 }
 
 #[test]
@@ -327,6 +327,23 @@ fn test_bullet_list() {
     let out = convert(&make_pdf(&[&page], "[0 0 300 300]", None));
     assert!(out.contains("- First item"), "{out}");
     assert!(out.contains("- Second item"), "{out}");
+}
+
+#[test]
+fn test_numbered_list_keeps_the_printed_numbers() {
+    let page = text("F1", 10, 20, 250, "3.")
+        + &text("F1", 10, 34, 250, "Third step")
+        + &text("F1", 10, 20, 238, "4.")
+        + &text("F1", 10, 34, 238, "Fourth step");
+    let out = convert(&make_pdf(&[&page], "[0 0 300 300]", None));
+    assert!(out.contains("3. Third step\n4. Fourth step\n"), "{out}");
+}
+
+#[test]
+fn test_markdown_syntax_in_body_text_is_escaped() {
+    let page = text("F1", 10, 20, 250, "2 * 3 and a_b and [x]");
+    let out = convert(&make_pdf(&[&page], "[0 0 300 300]", None));
+    assert!(out.contains("2 \\* 3 and a_b and \\[x\\]"), "{out}");
 }
 
 #[test]
@@ -358,7 +375,8 @@ fn test_rotated_page_reads_in_displayed_order() {
     // Text runs upward in user space; /Rotate 90 turns it into normal
     // left-to-right lines. Larger user x ends up lower on the displayed page.
     let line = |x: u32, s: &str| format!("BT /F1 10 Tf 0 1 -1 0 {x} 20 Tm ({s}) Tj ET ");
-    let page = line(120, "Second displayed line of text") + &line(100, "First displayed line of text");
+    let page =
+        line(120, "Second displayed line of text") + &line(100, "First displayed line of text");
     let out = convert(&make_pdf(&[&page], "[0 0 300 200] /Rotate 90", None));
     let first = out.find("First displayed line").expect(&out);
     let second = out.find("Second displayed line").expect(&out);
@@ -384,7 +402,7 @@ fn test_form_xobject_text_is_extracted() {
         ),
         (6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()),
     ];
-    let mut offsets = vec![0usize; 7];
+    let mut offsets = [0usize; 7];
     for (n, body) in &objs {
         offsets[*n] = pdf.len();
         pdf.push_str(&format!("{n} 0 obj\n{body}\nendobj\n"));
@@ -394,7 +412,9 @@ fn test_form_xobject_text_is_extracted() {
     for o in &offsets[1..] {
         pdf.push_str(&format!("{o:010} 00000 n \n"));
     }
-    pdf.push_str(&format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"));
+    pdf.push_str(&format!(
+        "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    ));
     let out = convert(pdf.as_bytes());
     assert!(out.contains("Inside a form object"), "{out}");
 }
@@ -436,12 +456,18 @@ fn convert_pages(input: &[u8], pages: &str) -> Result<String> {
 fn test_pages_option_selects_pages_and_keeps_numbers() {
     let pdf = three_pages();
     let out = convert_pages(&pdf, "2").unwrap();
-    assert!(out.contains("<!-- page 2 -->") && out.contains("Bravo findings."), "{out}");
+    assert!(
+        out.contains("<!-- page 2 -->") && out.contains("Bravo findings."),
+        "{out}"
+    );
     assert!(!out.contains("page 1") && !out.contains("Alpha"), "{out}");
     assert!(!out.contains("page 3") && !out.contains("Charlie"), "{out}");
 
     let out = convert_pages(&pdf, "1,3").unwrap();
-    assert!(out.contains("Alpha") && out.contains("Charlie") && !out.contains("Bravo"), "{out}");
+    assert!(
+        out.contains("Alpha") && out.contains("Charlie") && !out.contains("Bravo"),
+        "{out}"
+    );
     assert!(out.contains("<!-- page 3 -->"), "{out}");
 }
 
@@ -465,7 +491,10 @@ fn test_blank_selected_page_keeps_its_marker() {
 
     let out = convert_pages(&pdf, "2").unwrap();
     assert!(out.contains("<!-- page 2 -->"), "{out}");
-    assert!(!out.contains("no extractable text") && !out.contains("page 1"), "{out}");
+    assert!(
+        !out.contains("no extractable text") && !out.contains("page 1"),
+        "{out}"
+    );
 
     // Without `--pages` the document-level fallback is unchanged.
     let blank = make_pdf(&["", ""], "[0 0 300 300]", None);

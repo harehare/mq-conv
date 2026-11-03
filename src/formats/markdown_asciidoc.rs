@@ -22,10 +22,12 @@ impl Converter for MarkdownAsciidocConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-asciidoc",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-asciidoc",
+                message: e.to_string(),
+            })?;
 
         write_asciidoc(&parsed.nodes, writer).map_err(|e| Error::Conversion {
             format: "markdown-asciidoc",
@@ -98,7 +100,11 @@ fn write_asciidoc(nodes: &[Node], writer: &mut dyn Write) -> std::io::Result<()>
             if !table_data.is_empty() {
                 let max_col = table_data.iter().map(|(_, c, _)| *c).max().unwrap_or(0) + 1;
                 let max_row = table_data.iter().map(|(r, _, _)| *r).max().unwrap_or(0);
-                writeln!(writer, "[%header,cols=\"{}\"]", "1,".repeat(max_col).trim_end_matches(','))?;
+                writeln!(
+                    writer,
+                    "[%header,cols=\"{}\"]",
+                    "1,".repeat(max_col).trim_end_matches(',')
+                )?;
                 writeln!(writer, "|===")?;
                 for row_idx in 0..=max_row {
                     let mut cells = Vec::new();

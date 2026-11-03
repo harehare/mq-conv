@@ -31,10 +31,11 @@ impl Converter for OcrConverter {
             ),
         })?;
 
-        lt.set_image_from_mem(input).map_err(|e| Error::Conversion {
-            format: "ocr",
-            message: format!("Failed to load image for OCR: {e}"),
-        })?;
+        lt.set_image_from_mem(input)
+            .map_err(|e| Error::Conversion {
+                format: "ocr",
+                message: format!("Failed to load image for OCR: {e}"),
+            })?;
 
         let text = lt.get_utf8_text().map_err(|e| Error::Conversion {
             format: "ocr",

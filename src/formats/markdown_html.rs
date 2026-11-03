@@ -22,10 +22,12 @@ impl Converter for MarkdownHtmlConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-html",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-html",
+                message: e.to_string(),
+            })?;
 
         let html = parsed.to_html();
         writer.write_all(html.as_bytes())?;

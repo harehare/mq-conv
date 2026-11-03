@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use crate::converter::Converter;
+use crate::document::{Block, Builder, Document, Inline};
 use crate::error::{Error, Result};
 
 pub struct MediaWikiConverter;
@@ -16,8 +17,7 @@ impl Converter for MediaWikiConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        writer.write_all(convert_wiki(text).as_bytes())?;
-        Ok(())
+        parse_wiki(text).write_markdown(writer)
     }
 }
 
@@ -32,54 +32,6 @@ fn find_str(chars: &[char], from: usize, needle: &str) -> Option<usize> {
         i += 1;
     }
     None
-}
-
-fn convert_wiki_links(s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let n = chars.len();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < n {
-        if chars[i] == '[' && i + 1 < n && chars[i + 1] == '['
-            && let Some(close) = find_str(&chars, i, "]]") {
-                let inner: String = chars[i + 2..close].iter().collect();
-                let lower = inner.to_ascii_lowercase();
-                if lower.starts_with("category:") {
-                    i = close + 2;
-                    continue;
-                }
-                let is_file = lower.starts_with("file:") || lower.starts_with("image:");
-                let (target, text) = if let Some(pos) = inner.find('|') {
-                    (inner[..pos].to_string(), inner[pos + 1..].to_string())
-                } else {
-                    (inner.clone(), inner.clone())
-                };
-                if is_file {
-                    out.push_str(&format!("![{text}]({target})"));
-                } else {
-                    out.push_str(&format!("[{text}]({target})"));
-                }
-                i = close + 2;
-                continue;
-            }
-        if chars[i] == '['
-            && let Some(rel) = chars[i + 1..].iter().position(|&c| c == ']') {
-                let close = i + 1 + rel;
-                let inner: String = chars[i + 1..close].iter().collect();
-                if inner.starts_with("http://") || inner.starts_with("https://") {
-                    let mut parts = inner.splitn(2, ' ');
-                    let url = parts.next().unwrap_or("").to_string();
-                    let text = parts.next().map(|t| t.trim().to_string()).unwrap_or_default();
-                    let text = if text.is_empty() { url.clone() } else { text };
-                    out.push_str(&format!("[{text}]({url})"));
-                    i = close + 1;
-                    continue;
-                }
-            }
-        out.push(chars[i]);
-        i += 1;
-    }
-    out
 }
 
 fn strip_tag_span(s: &str, tag: &str) -> String {
@@ -137,46 +89,131 @@ fn strip_templates(s: &str) -> String {
     out
 }
 
-fn inline_wiki_to_md(s: &str) -> String {
+/// Inline markup: bold and italic quotes, `<code>`, links, files and `<br>`.
+/// Templates, `<ref>` notes and category links are dropped.
+fn inline_wiki(s: &str) -> Vec<Inline> {
     let s = strip_tag_span(s, "ref");
     let s = strip_templates(&s);
-    let s = convert_wiki_links(&s);
-    let s = s.replace("'''''", "***").replace("'''", "**").replace("''", "*");
-    let s = s.replace("<code>", "`").replace("</code>", "`");
     let s = s.replace("<nowiki>", "").replace("</nowiki>", "");
-    s.replace("<br />", "  \n")
-        .replace("<br/>", "  \n")
-        .replace("<br>", "  \n")
+    parse_inline(&s.chars().collect::<Vec<_>>())
 }
 
-fn render_table(rows: &[Vec<String>], out: &mut String) {
-    let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if cols == 0 {
-        return;
-    }
-    for (ri, row) in rows.iter().enumerate() {
-        out.push('|');
-        for c in 0..cols {
-            out.push(' ');
-            out.push_str(row.get(c).map(|s| s.as_str()).unwrap_or(""));
-            out.push_str(" |");
+fn parse_inline(chars: &[char]) -> Vec<Inline> {
+    let n = chars.len();
+    let mut out = Vec::new();
+    let mut text = String::new();
+    let flush = |text: &mut String, out: &mut Vec<Inline>| {
+        if !text.is_empty() {
+            out.push(Inline::Text(std::mem::take(text)));
         }
-        out.push('\n');
-        if ri == 0 {
-            out.push('|');
-            for _ in 0..cols {
-                out.push_str(" --- |");
+    };
+    let starts = |i: usize, s: &str| {
+        s.chars()
+            .enumerate()
+            .all(|(k, c)| chars.get(i + k) == Some(&c))
+    };
+    let mut i = 0;
+    while i < n {
+        if starts(i, "[[")
+            && let Some(close) = find_str(chars, i, "]]")
+        {
+            let inner: String = chars[i + 2..close].iter().collect();
+            i = close + 2;
+            let lower = inner.to_ascii_lowercase();
+            if lower.starts_with("category:") {
+                continue;
             }
-            out.push('\n');
+            let (target, label) = match inner.split_once('|') {
+                Some((t, l)) => (t.to_string(), l.to_string()),
+                None => (inner.clone(), inner),
+            };
+            flush(&mut text, &mut out);
+            if lower.starts_with("file:") || lower.starts_with("image:") {
+                out.push(Inline::Image {
+                    url: target,
+                    alt: label,
+                });
+            } else {
+                out.push(Inline::Link {
+                    url: target,
+                    content: vec![Inline::Text(label)],
+                });
+            }
+            continue;
         }
+        if chars[i] == '['
+            && let Some(rel) = chars[i + 1..].iter().position(|&c| c == ']')
+        {
+            let close = i + 1 + rel;
+            let inner: String = chars[i + 1..close].iter().collect();
+            if inner.starts_with("http://") || inner.starts_with("https://") {
+                let mut parts = inner.splitn(2, ' ');
+                let url = parts.next().unwrap_or("").to_string();
+                let label = parts.next().map(str::trim).unwrap_or_default();
+                let label = if label.is_empty() {
+                    url.clone()
+                } else {
+                    label.to_string()
+                };
+                flush(&mut text, &mut out);
+                out.push(Inline::Link {
+                    url,
+                    content: vec![Inline::Text(label)],
+                });
+                i = close + 1;
+                continue;
+            }
+        }
+        if chars[i] == '\'' {
+            let run = chars[i..].iter().take_while(|&&c| c == '\'').count();
+            let (mark, wrap): (&str, fn(Vec<Inline>) -> Inline) = match run {
+                5.. => ("'''''", |inner| {
+                    Inline::Strong(vec![Inline::Emphasis(inner)])
+                }),
+                3 | 4 => ("'''", Inline::Strong),
+                _ => ("''", Inline::Emphasis),
+            };
+            if run >= 2
+                && let Some(close) = find_str(chars, i + mark.len(), mark)
+            {
+                flush(&mut text, &mut out);
+                out.push(wrap(parse_inline(&chars[i + mark.len()..close])));
+                i = close + mark.len();
+                continue;
+            }
+            text.extend(std::iter::repeat_n('\'', run));
+            i += run;
+            continue;
+        }
+        if starts(i, "<code>")
+            && let Some(close) = find_str(chars, i + 6, "</code>")
+        {
+            flush(&mut text, &mut out);
+            out.push(Inline::Code(chars[i + 6..close].iter().collect()));
+            i = close + 7;
+            continue;
+        }
+        if let Some(len) = ["<br />", "<br/>", "<br>"]
+            .iter()
+            .find(|t| starts(i, t))
+            .map(|t| t.len())
+        {
+            flush(&mut text, &mut out);
+            out.push(Inline::Break);
+            i += len;
+            continue;
+        }
+        text.push(chars[i]);
+        i += 1;
     }
-    out.push('\n');
+    flush(&mut text, &mut out);
+    out
 }
 
-fn parse_wiki_table(lines: &[&str], start: usize) -> (Vec<Vec<String>>, usize) {
+fn parse_wiki_table(lines: &[&str], start: usize) -> (Vec<Vec<Vec<Inline>>>, usize) {
     let mut i = start + 1;
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut current_row: Vec<String> = Vec::new();
+    let mut rows: Vec<Vec<Vec<Inline>>> = Vec::new();
+    let mut current_row: Vec<Vec<Inline>> = Vec::new();
     while i < lines.len() {
         let trimmed = lines[i].trim();
         if trimmed.starts_with("|}") {
@@ -192,7 +229,7 @@ fn parse_wiki_table(lines: &[&str], start: usize) -> (Vec<Vec<String>>, usize) {
         }
         if let Some(rest) = trimmed.strip_prefix('!') {
             for cell in rest.split("!!") {
-                current_row.push(inline_wiki_to_md(cell.trim()));
+                current_row.push(inline_wiki(cell.trim()));
             }
             i += 1;
             continue;
@@ -200,7 +237,7 @@ fn parse_wiki_table(lines: &[&str], start: usize) -> (Vec<Vec<String>>, usize) {
         if let Some(rest) = trimmed.strip_prefix('|') {
             if !rest.starts_with('}') {
                 for cell in rest.split("||") {
-                    current_row.push(inline_wiki_to_md(cell.trim()));
+                    current_row.push(inline_wiki(cell.trim()));
                 }
             }
             i += 1;
@@ -225,9 +262,16 @@ fn is_special_wiki_line(line: &str) -> bool {
         || (t.chars().all(|c| c == '-') && t.len() >= 4)
 }
 
-fn convert_wiki(text: &str) -> String {
+fn code(lines: Vec<String>) -> Block {
+    Block::Code {
+        lang: None,
+        text: lines.join("\n"),
+    }
+}
+
+fn parse_wiki(text: &str) -> Document {
     let lines: Vec<&str> = text.lines().collect();
-    let mut out = String::new();
+    let mut out = Builder::default();
     let mut i = 0;
 
     while i < lines.len() {
@@ -242,25 +286,31 @@ fn convert_wiki(text: &str) -> String {
         if trimmed.starts_with('=') {
             let eq_prefix = trimmed.chars().take_while(|&c| c == '=').count();
             let rest_after_prefix = trimmed[eq_prefix..].trim_end();
-            let eq_suffix = rest_after_prefix.chars().rev().take_while(|&c| c == '=').count();
+            let eq_suffix = rest_after_prefix
+                .chars()
+                .rev()
+                .take_while(|&c| c == '=')
+                .count();
             if eq_prefix > 0 && eq_suffix > 0 && rest_after_prefix.len() >= eq_suffix {
                 let title = rest_after_prefix[..rest_after_prefix.len() - eq_suffix].trim();
-                let level = eq_prefix.min(6);
-                out.push_str(&format!("{} {}\n\n", "#".repeat(level), inline_wiki_to_md(title)));
+                out.push(Block::Heading {
+                    level: eq_prefix.min(6) as u8,
+                    content: inline_wiki(title),
+                });
                 i += 1;
                 continue;
             }
         }
 
         if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 4 {
-            out.push_str("---\n\n");
+            out.push(Block::Rule);
             i += 1;
             continue;
         }
 
         if trimmed.starts_with("{|") {
             let (rows, next_i) = parse_wiki_table(&lines, i);
-            render_table(&rows, &mut out);
+            out.push(Block::Table(rows));
             i = next_i;
             continue;
         }
@@ -271,12 +321,7 @@ fn convert_wiki(text: &str) -> String {
                 if !inline_content.is_empty() {
                     block.push(inline_content.to_string());
                 }
-                out.push_str("```\n");
-                for l in &block {
-                    out.push_str(l);
-                    out.push('\n');
-                }
-                out.push_str("```\n\n");
+                out.push(code(block));
                 i += 1;
                 continue;
             }
@@ -295,12 +340,7 @@ fn convert_wiki(text: &str) -> String {
                 }
                 i += 1;
             }
-            out.push_str("```\n");
-            for l in &block {
-                out.push_str(l);
-                out.push('\n');
-            }
-            out.push_str("```\n\n");
+            out.push(code(block));
             continue;
         }
 
@@ -310,37 +350,27 @@ fn convert_wiki(text: &str) -> String {
                 block.push(lines[i][1..].to_string());
                 i += 1;
             }
-            out.push_str("```\n");
-            for l in &block {
-                out.push_str(l);
-                out.push('\n');
-            }
-            out.push_str("```\n\n");
+            out.push(code(block));
             continue;
         }
 
         if trimmed.starts_with('*') || trimmed.starts_with('#') {
             let marker = trimmed.chars().next().unwrap();
             let depth = trimmed.chars().take_while(|&c| c == marker).count();
-            let rest = trimmed[depth..].trim();
-            out.push_str(&"  ".repeat(depth.saturating_sub(1)));
-            if marker == '#' {
-                out.push_str("1. ");
-            } else {
-                out.push_str("- ");
-            }
-            out.push_str(&inline_wiki_to_md(rest));
-            out.push('\n');
+            out.item(
+                depth - 1,
+                marker == '#',
+                inline_wiki(trimmed[depth..].trim()),
+            );
             i += 1;
             continue;
         }
 
         if trimmed.starts_with(':') {
             let depth = trimmed.chars().take_while(|&c| c == ':').count();
-            let rest = trimmed[depth..].trim();
-            out.push_str("> ");
-            out.push_str(&inline_wiki_to_md(rest));
-            out.push('\n');
+            out.push(Block::Quote(vec![Block::Paragraph(inline_wiki(
+                trimmed[depth..].trim(),
+            ))]));
             i += 1;
             continue;
         }
@@ -356,16 +386,21 @@ fn convert_wiki(text: &str) -> String {
             para.push(lines[i].trim().to_string());
             i += 1;
         }
-        out.push_str(&inline_wiki_to_md(&para.join(" ")));
-        out.push_str("\n\n");
+        out.push(Block::Paragraph(inline_wiki(&para.join(" "))));
     }
 
-    out
+    out.finish()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn convert_wiki(text: &str) -> String {
+        let mut out = Vec::new();
+        parse_wiki(text).write_markdown(&mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
 
     #[test]
     fn test_headings() {
@@ -382,21 +417,24 @@ mod tests {
 
     #[test]
     fn test_internal_link() {
-        assert_eq!(convert_wiki("[[Main Page|Home]]\n"), "[Home](Main Page)\n\n");
+        assert_eq!(
+            convert_wiki("[[Main Page|Home]]\n"),
+            "[Home](<Main Page>)\n"
+        );
     }
 
     #[test]
     fn test_external_link() {
         assert_eq!(
             convert_wiki("[https://example.com Example]\n"),
-            "[Example](https://example.com)\n\n"
+            "[Example](https://example.com)\n"
         );
     }
 
     #[test]
     fn test_lists() {
         assert_eq!(convert_wiki("* one\n* two\n"), "- one\n- two\n");
-        assert_eq!(convert_wiki("# one\n# two\n"), "1. one\n1. two\n");
+        assert_eq!(convert_wiki("# one\n# two\n"), "1. one\n2. two\n");
     }
 
     #[test]
@@ -404,7 +442,7 @@ mod tests {
         let input = "{|\n|-\n! A !! B\n|-\n| 1 || 2\n|}\n";
         let out = convert_wiki(input);
         assert!(out.contains("| A | B |"));
-        assert!(out.contains("| --- | --- |"));
+        assert!(out.contains("| - | - |"));
         assert!(out.contains("| 1 | 2 |"));
     }
 
@@ -422,11 +460,29 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_lists_and_following_paragraph() {
+        let out = convert_wiki("* a\n** a1\n* b\n\nAfter\n");
+        assert_eq!(out, "- a\n  - a1\n- b\n\nAfter\n");
+    }
+
+    #[test]
+    fn test_unclosed_quotes_stay_literal_and_br_is_a_break() {
+        assert_eq!(convert_wiki("it''s<br>done\n"), "it''s  \ndone\n");
+    }
+
+    #[test]
+    fn test_file_link_is_an_image() {
+        assert_eq!(convert_wiki("[[File:a.png|alt]]\n"), "![alt](File:a.png)\n");
+    }
+
+    #[test]
     fn test_converter_trait() {
         let converter = MediaWikiConverter;
         let mut buf = Vec::new();
-        converter.convert(b"== Title ==\n\nHello.\n", &mut buf).unwrap();
-        assert_eq!(String::from_utf8(buf).unwrap(), "## Title\n\nHello.\n\n");
+        converter
+            .convert(b"== Title ==\n\nHello.\n", &mut buf)
+            .unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "## Title\n\nHello.\n");
         assert_eq!(converter.format_name(), "mediawiki");
         assert_eq!(converter.output_extension(), "md");
     }

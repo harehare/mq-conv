@@ -10,12 +10,6 @@ pub enum Format {
     Zip,
     Epub,
     Audio,
-    Csv,
-    Html,
-    Json,
-    Yaml,
-    Toml,
-    Xml,
     Sqlite,
     Tar,
     Video,
@@ -38,9 +32,10 @@ pub enum Format {
 impl Format {
     pub fn detect(filename: Option<&str>, bytes: &[u8]) -> Option<Self> {
         if let Some(name) = filename
-            && let Some(fmt) = Self::from_extension(name) {
-                return Some(fmt);
-            }
+            && let Some(fmt) = Self::from_extension(name)
+        {
+            return Some(fmt);
+        }
         Self::from_magic_bytes(bytes)
     }
 
@@ -61,18 +56,10 @@ impl Format {
             "zip" => Some(Self::Zip),
             "epub" => Some(Self::Epub),
             "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" => Some(Self::Audio),
-            "csv" | "tsv" => Some(Self::Csv),
-            "html" | "htm" => Some(Self::Html),
-            "json" => Some(Self::Json),
-            "yaml" | "yml" => Some(Self::Yaml),
-            "toml" => Some(Self::Toml),
-            "xml" => Some(Self::Xml),
             "sqlite" | "sqlite3" | "db" => Some(Self::Sqlite),
             "tar" => Some(Self::Tar),
             "tgz" => Some(Self::Tar),
-            "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "flv" => {
-                Some(Self::Video)
-            }
+            "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "flv" => Some(Self::Video),
             "md" | "markdown" => Some(Self::MarkdownDocx),
             "rst" => Some(Self::Rst),
             "org" => Some(Self::Org),
@@ -225,12 +212,6 @@ impl Format {
             "zip" => Some(Self::Zip),
             "epub" => Some(Self::Epub),
             "audio" => Some(Self::Audio),
-            "csv" => Some(Self::Csv),
-            "html" => Some(Self::Html),
-            "json" => Some(Self::Json),
-            "yaml" => Some(Self::Yaml),
-            "toml" => Some(Self::Toml),
-            "xml" => Some(Self::Xml),
             "sqlite" => Some(Self::Sqlite),
             "tar" => Some(Self::Tar),
             "video" => Some(Self::Video),
@@ -264,12 +245,6 @@ impl std::fmt::Display for Format {
             Self::Zip => write!(f, "zip"),
             Self::Epub => write!(f, "epub"),
             Self::Audio => write!(f, "audio"),
-            Self::Csv => write!(f, "csv"),
-            Self::Html => write!(f, "html"),
-            Self::Json => write!(f, "json"),
-            Self::Yaml => write!(f, "yaml"),
-            Self::Toml => write!(f, "toml"),
-            Self::Xml => write!(f, "xml"),
             Self::Sqlite => write!(f, "sqlite"),
             Self::Tar => write!(f, "tar"),
             Self::Video => write!(f, "video"),

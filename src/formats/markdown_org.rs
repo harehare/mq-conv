@@ -22,10 +22,12 @@ impl Converter for MarkdownOrgConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-org",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-org",
+                message: e.to_string(),
+            })?;
 
         write_org(&parsed.nodes, writer).map_err(|e| Error::Conversion {
             format: "markdown-org",
@@ -110,7 +112,11 @@ fn write_org(nodes: &[Node], writer: &mut dyn Write) -> std::io::Result<()> {
                     }
                     writeln!(writer, "| {} |", cells.join(" | "))?;
                     if row_idx == 0 {
-                        let separator = cells.iter().map(|c| "-".repeat(c.len().max(3))).collect::<Vec<_>>().join("-+-");
+                        let separator = cells
+                            .iter()
+                            .map(|c| "-".repeat(c.len().max(3)))
+                            .collect::<Vec<_>>()
+                            .join("-+-");
                         writeln!(writer, "|-{separator}-|")?;
                     }
                 }

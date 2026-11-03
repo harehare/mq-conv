@@ -1,7 +1,9 @@
 use std::io::{Cursor, Read, Write};
 
 use crate::converter::Converter;
+use crate::document::{Block, Document};
 use crate::error::{Error, Result};
+use crate::formats::media::format_size;
 
 pub struct TarConverter;
 
@@ -13,8 +15,7 @@ impl Converter for TarConverter {
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
         // Try gzip first, then plain tar
         if is_gzip(input) {
-            let decoder =
-                flate2::read::GzDecoder::new(Cursor::new(input));
+            let decoder = flate2::read::GzDecoder::new(Cursor::new(input));
             convert_tar(decoder, writer)
         } else {
             convert_tar(Cursor::new(input), writer)
@@ -60,14 +61,11 @@ fn convert_tar<R: Read>(reader: R, writer: &mut dyn Write) -> Result<()> {
         items.push((path, size, kind));
     }
 
-    writeln!(writer, "# Archive")?;
-    writeln!(writer)?;
-    writeln!(writer, "**Total entries**: {}", items.len())?;
-    writeln!(writer)?;
+    let mut doc = Document::new();
+    doc.push(Block::heading(1, "Archive"));
+    doc.push(Block::field("Total entries", items.len()));
 
-    writeln!(writer, "| # | Name | Size | Type |")?;
-    writeln!(writer, "|---|------|------|------|")?;
-
+    let mut rows = vec![["#", "Name", "Size", "Type"].map(String::from).to_vec()];
     for (idx, (name, size, kind)) in items.iter().enumerate() {
         let type_str = match kind {
             'd' => "dir",
@@ -81,31 +79,46 @@ fn convert_tar<R: Read>(reader: R, writer: &mut dyn Write) -> Result<()> {
         } else {
             format_size(*size)
         };
-        writeln!(
-            writer,
-            "| {} | {name} | {size_str} | {type_str} |",
-            idx + 1,
-        )?;
+        rows.push(vec![
+            (idx + 1).to_string(),
+            name.clone(),
+            size_str,
+            type_str.to_string(),
+        ]);
     }
-
-    writeln!(writer)?;
-    writeln!(writer, "**Total size**: {}", format_size(total_size))?;
-
-    Ok(())
+    doc.push(Block::text_table(&rows));
+    doc.push(Block::field("Total size", format_size(total_size)));
+    doc.write_markdown(writer)
 }
 
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} B")
+    fn tar_with(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = ::tar::Builder::new(Vec::new());
+        for (name, data) in files {
+            let mut header = ::tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, name, *data).unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
+    #[test]
+    fn lists_entries_and_totals() {
+        let bytes = tar_with(&[("a.txt", b"hello"), ("dir/b.txt", &[0u8; 2048])]);
+        let mut out = Vec::new();
+        TarConverter.convert(&bytes, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(
+            out.starts_with("# Archive\n\n**Total entries**: 2\n\n"),
+            "{out}"
+        );
+        assert!(out.contains("| 1 | a.txt "), "{out}");
+        assert!(out.contains("2.0 KB"), "{out}");
+        assert!(out.ends_with("**Total size**: 2.0 KB\n"), "{out}");
     }
 }

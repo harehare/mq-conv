@@ -23,87 +23,37 @@ path = "src/lib.rs"
 [features]
 asciidoc = []
 audio = ["dep:lofty"]
-csv = ["dep:csv", "dep:encoding_rs", "dep:chardetng"]
-default = [
-  "excel",
-  "pdf",
-  "powerpoint",
-  "word",
-  "image",
-  "zip",
-  "epub",
-  "audio",
-  "csv",
-  "html",
-  "json",
-  "yaml",
-  "toml_conv",
-  "xml",
-  "sqlite",
-  "tar",
-  "video",
-  "markdown_docx",
-  "markdown_html",
-  "markdown_text",
-  "markdown_latex",
-  "markdown_rst",
-  "markdown_asciidoc",
-  "markdown_org",
-  "markdown_epub_out",
-  "markdown_json_ast",
-  "rst",
-  "org",
-  "mediawiki",
-  "asciidoc",
-  "query",
-]
-epub = ["dep:zip", "dep:quick-xml", "dep:mq-markdown"]
+default = ["documents", "markup", "writers", "media", "sqlite", "query"]
+epub = ["dep:zip", "dep:quick-xml"]
 excel = ["dep:calamine"]
-html = ["dep:mq-markdown", "dep:encoding_rs", "dep:chardetng"]
 image = ["dep:image", "dep:kamadak-exif"]
-json = ["dep:serde_json"]
-markdown_asciidoc = ["dep:mq-markdown"]
-markdown_docx = ["dep:docx-rs", "dep:mq-markdown"]
-markdown_epub_out = ["dep:epub-builder", "dep:mq-markdown"]
-markdown_html = ["dep:mq-markdown"]
-markdown_json_ast = ["dep:serde_json", "dep:mq-markdown"]
-markdown_latex = ["dep:mq-markdown"]
-markdown_org = ["dep:mq-markdown"]
-markdown_rst = ["dep:mq-markdown"]
-markdown_text = ["dep:mq-markdown"]
+markdown_asciidoc = []
+markdown_docx = ["dep:docx-rs"]
+markdown_epub_out = ["dep:epub-builder"]
+markdown_html = []
+markdown_json_ast = ["dep:serde_json"]
+markdown_latex = []
+markdown_org = []
+markdown_rst = []
+markdown_text = []
 mediawiki = []
 ocr = ["dep:leptess"]
 org = []
 pdf = ["dep:lopdf", "dep:encoding_rs", "dep:flate2"]
 powerpoint = ["dep:zip", "dep:quick-xml"]
-query = ["dep:mq-lang", "dep:mq-markdown"]
+query = ["dep:mq-lang"]
 rst = []
 sqlite = ["dep:rusqlite"]
 tar = ["dep:tar", "dep:flate2"]
-toml_conv = ["dep:toml"]
 video = ["dep:lofty"]
 word = ["dep:zip", "dep:quick-xml"]
-xml = ["dep:quick-xml"]
-yaml = ["dep:serde_yaml"]
 zip = ["dep:zip"]
 
-wasm = [
-  "excel",
-  "pdf",
-  "powerpoint",
-  "word",
-  "image",
-  "zip",
-  "epub",
-  "audio",
-  "csv",
-  "html",
-  "json",
-  "yaml",
-  "toml_conv",
-  "xml",
-  "tar",
-  "video",
+# Feature groups.
+documents = ["excel", "pdf", "powerpoint", "word", "epub", "zip"]
+markup = ["rst", "org", "mediawiki", "asciidoc"]
+media = ["image", "audio", "video", "tar"]
+writers = [
   "markdown_docx",
   "markdown_html",
   "markdown_text",
@@ -113,39 +63,11 @@ wasm = [
   "markdown_org",
   "markdown_epub_out",
   "markdown_json_ast",
-  "rst",
-  "org",
-  "mediawiki",
-  "asciidoc",
 ]
 
-wasm_slim = [
-  "excel",
-  "pdf",
-  "powerpoint",
-  "word",
-  "zip",
-  "epub",
-  "csv",
-  "html",
-  "json",
-  "yaml",
-  "toml_conv",
-  "xml",
-  "markdown_docx",
-  "markdown_html",
-  "markdown_text",
-  "markdown_latex",
-  "markdown_rst",
-  "markdown_asciidoc",
-  "markdown_org",
-  "markdown_epub_out",
-  "markdown_json_ast",
-  "rst",
-  "org",
-  "mediawiki",
-  "asciidoc",
-]
+# WebAssembly builds leave out sqlite, query and ocr, which need native code.
+wasm = ["documents", "markup", "writers", "media"]
+wasm_slim = ["documents", "markup", "writers"]
 
 [dependencies]
 clap = {version = "4.6", features = ["derive"]}
@@ -153,8 +75,6 @@ miette = {version = "7", features = ["fancy"]}
 thiserror = "2"
 
 calamine = {version = "0.37", optional = true}
-chardetng = {version = "1.0", optional = true}
-csv = {version = "1", optional = true}
 docx-rs = {version = "0.4", optional = true}
 encoding_rs = {version = "0.8", optional = true}
 epub-builder = {version = "0.8", optional = true}
@@ -165,13 +85,11 @@ leptess = {version = "0.14", optional = true}
 lofty = {version = "0.25", optional = true}
 lopdf = {version = "0.46", optional = true, default-features = false}
 mq-lang = {version = "0.10.0", optional = true}
-mq-markdown = {version = "0.10.0", optional = true, features = ["html-to-markdown", "json"]}
+mq-markdown = {version = "0.10.0", features = ["html-to-markdown", "json"]}
 quick-xml = {version = "0.42", optional = true}
 rusqlite = {version = "0.41", optional = true, features = ["bundled"]}
 serde_json = {version = "1", optional = true, features = ["preserve_order"]}
-serde_yaml = {version = "0.9", optional = true}
 tar = {version = "0.4", optional = true}
-toml = {version = "1.1", optional = true}
 zip = {version = "9.0", optional = true, default-features = false, features = ["deflate"]}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

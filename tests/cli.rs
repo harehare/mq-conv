@@ -137,10 +137,7 @@ fn query_prints_only_the_matching_nodes() {
 fn query_functions_know_the_input() {
     let dir = org_dir("query-fns");
     // The query runs once per top-level node, so the line repeats.
-    let out = run(
-        &dir,
-        &["guide.org", "-q", r#"format() + " " + filename()"#],
-    );
+    let out = run(&dir, &["guide.org", "-q", r#"format() + " " + filename()"#]);
     assert!(out.status.success(), "{}", stderr(&out));
     let text = stdout(&out);
     assert!(!text.is_empty());

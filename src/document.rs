@@ -70,6 +70,30 @@ pub struct FlatItem {
     pub content: Vec<Inline>,
 }
 
+impl Inline {
+    /// A text run with optional bold and italic marks.
+    pub fn styled(text: impl Into<String>, bold: bool, italic: bool) -> Self {
+        let run = Self::Text(text.into());
+        match (bold, italic) {
+            (true, true) => Self::Strong(vec![Self::Emphasis(vec![run])]),
+            (true, false) => Self::Strong(vec![run]),
+            (false, true) => Self::Emphasis(vec![run]),
+            (false, false) => run,
+        }
+    }
+}
+
+/// Trims the whitespace at both ends and drops text runs left empty.
+pub fn trim_inlines(content: &mut Vec<Inline>) {
+    if let Some(Inline::Text(first)) = content.first_mut() {
+        *first = first.trim_start().to_string();
+    }
+    if let Some(Inline::Text(last)) = content.last_mut() {
+        *last = last.trim_end().to_string();
+    }
+    content.retain(|i| !matches!(i, Inline::Text(t) if t.is_empty()));
+}
+
 impl Block {
     /// A heading with plain text.
     pub fn heading(level: u8, text: impl Into<String>) -> Self {
@@ -685,6 +709,17 @@ mod tests {
             markdown(&d),
             "| Tag   | Value |\n| ----- | ----- |\n| Title | a\\|b  |\n"
         );
+    }
+
+    #[test]
+    fn styled_runs_and_trimming() {
+        assert_eq!(
+            Inline::styled("a", true, true),
+            Inline::Strong(vec![Inline::Emphasis(vec![t("a")])])
+        );
+        let mut c = vec![t("  a"), Inline::Strong(vec![t("b")]), t(" ")];
+        trim_inlines(&mut c);
+        assert_eq!(c, vec![t("a"), Inline::Strong(vec![t("b")])]);
     }
 
     #[test]

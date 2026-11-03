@@ -5,7 +5,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::converter::{ConvertOptions, Converter};
-use crate::document::{Block, Builder, Document, Inline};
+use crate::document::{Block, Builder, Document, Inline, trim_inlines};
 use crate::error::{Error, Result};
 use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
 
@@ -165,7 +165,7 @@ fn parse_document(
                     if in_table_cell {
                         cell.push(Inline::Text(text));
                     } else if in_paragraph && !text.is_empty() {
-                        let run = format_run(text, is_bold, is_italic);
+                        let run = Inline::styled(text, is_bold, is_italic);
                         if in_hyperlink {
                             hyperlink_buf.push(run);
                         } else {
@@ -337,28 +337,6 @@ fn parse_numbering(xml: &str) -> HashMap<(String, u32), bool> {
         }
     }
     result
-}
-
-/// A text run with its bold and italic marks.
-fn format_run(text: String, bold: bool, italic: bool) -> Inline {
-    let run = Inline::Text(text);
-    match (bold, italic) {
-        (true, true) => Inline::Strong(vec![Inline::Emphasis(vec![run])]),
-        (true, false) => Inline::Strong(vec![run]),
-        (false, true) => Inline::Emphasis(vec![run]),
-        (false, false) => run,
-    }
-}
-
-/// Trims the whitespace at both ends of a cell.
-fn trim_inlines(content: &mut Vec<Inline>) {
-    if let Some(Inline::Text(first)) = content.first_mut() {
-        *first = first.trim_start().to_string();
-    }
-    if let Some(Inline::Text(last)) = content.last_mut() {
-        *last = last.trim_end().to_string();
-    }
-    content.retain(|i| !matches!(i, Inline::Text(t) if t.is_empty()));
 }
 
 fn is_blockquote(style: &str) -> bool {

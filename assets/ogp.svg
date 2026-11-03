@@ -19,7 +19,7 @@
   <text x="60" y="300" font-family="'IBM Plex Mono', monospace" font-size="38" font-weight="700" fill="#f5f0e1">Any document,</text>
   <text x="60" y="348" font-family="'IBM Plex Mono', monospace" font-size="38" font-weight="700" fill="#f5f0e1">as <tspan fill="#F5C518">Markdown.</tspan></text>
 
-  <text x="60" y="414" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#a89d7e">PDF, Office, and 20+ formats to structure-preserving</text>
+  <text x="60" y="414" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#a89d7e">PDF, Office, and 20 formats to structure-preserving</text>
   <text x="60" y="442" font-family="'IBM Plex Sans', Arial, sans-serif" font-size="20" fill="#a89d7e">Markdown. Offline, one binary, no API keys.</text>
 
   <rect x="60.5" y="472.5" width="300" height="48" rx="4" fill="#2e2711" stroke="#4d4020"/>

@@ -13,12 +13,12 @@
 
 </div>
 
-`mq-conv` turns PDFs, Office docs and 20+ other formats into clean, structure-preserving Markdown. It runs locally: no API keys, no network, no Python runtime. It is built to feed [mq](https://github.com/harehare/mq), the jq-like query tool for Markdown.
+`mq-conv` turns PDFs, Office docs and 20 other formats into clean, structure-preserving Markdown. It runs locally: no API keys, no network, no Python runtime. It is built to feed [mq](https://github.com/harehare/mq), the jq-like query tool for Markdown.
 
 ## Features
 
 - [Layout-aware PDF parsing](https://conv.mqlang.org/book/guide/how-it-works.html): columns, headings, lists, ruled and borderless tables, CJK fonts
-- [20+ formats](https://conv.mqlang.org/book/guide/formats.html): documents, markup, spreadsheets, data, media, archives
+- [20 formats](https://conv.mqlang.org/book/guide/formats.html): documents, markup, spreadsheets, data, media, archives
 - [Built-in mq queries](https://conv.mqlang.org/book/guide/queries.html), [token budgeting](https://conv.mqlang.org/book/guide/tokens.html) and [page selection](https://conv.mqlang.org/book/guide/pages.html)
 - [Image extraction and OCR](https://conv.mqlang.org/book/guide/images-ocr.html), [Markdown to docx, HTML, EPUB and more](https://conv.mqlang.org/book/guide/markdown-out.html)
 - Parallel conversion, per-format [feature flags](https://conv.mqlang.org/book/reference/features.html) and a [WebAssembly](https://conv.mqlang.org/book/reference/wasm.html) build

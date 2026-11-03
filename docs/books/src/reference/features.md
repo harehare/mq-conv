@@ -8,7 +8,7 @@ cargo install mq-conv --no-default-features --features pdf,word,html
 
 | Feature | Enables |
 | --- | --- |
-| `pdf`, `word`, `powerpoint`, `excel`, `epub`, `html`, `csv` | the matching input format |
+| `pdf`, `word`, `powerpoint`, `excel`, `epub` | the matching input format |
 | `json`, `yaml`, `toml_conv`, `xml`, `sqlite` | data formats |
 | `rst`, `org`, `mediawiki`, `asciidoc` | markup input |
 | `image`, `audio`, `video`, `zip`, `tar` | media and archives |

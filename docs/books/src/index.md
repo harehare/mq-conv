@@ -13,7 +13,7 @@ mq-conv book.pdf --max-tokens 4000 # one prompt-sized chunk at a time
 ## Features
 
 - Layout-aware PDF parsing: columns, headings, lists, ruled and borderless tables, CJK fonts
-- 20+ formats in one CLI, detected by extension and magic bytes
+- 20 formats in one CLI, detected by extension and magic bytes
 - Parallel conversion of PDF pages and input files
 - [Token budgeting](guide/tokens.md) and [page selection](guide/pages.md)
 - Built-in [mq queries](guide/queries.md)

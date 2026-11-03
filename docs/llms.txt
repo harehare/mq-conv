@@ -1,6 +1,6 @@
 # mq-conv
 
-> mq-conv converts PDFs, Office docs and 20+ other formats into structure-preserving Markdown, locally and offline, as a single binary. Built to feed mq (https://mqlang.org/). Supports layout-aware PDF parsing, token budgeting (--max-tokens, --cursor), page selection (--pages), built-in mq queries (-q), image extraction, OCR and Markdown to docx/HTML/LaTeX/EPUB.
+> mq-conv converts PDFs, Office docs and 20 other formats into structure-preserving Markdown, locally and offline, as a single binary. Built to feed mq (https://mqlang.org/). Supports layout-aware PDF parsing, token budgeting (--max-tokens, --cursor), page selection (--pages), built-in mq queries (-q), image extraction, OCR and Markdown to docx/HTML/LaTeX/EPUB.
 
 ## Docs
 

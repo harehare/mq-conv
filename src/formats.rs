@@ -5,16 +5,10 @@ pub mod structured;
 pub mod asciidoc;
 #[cfg(feature = "audio")]
 pub mod audio;
-#[cfg(feature = "csv")]
-pub mod csv;
-#[cfg(any(feature = "csv", feature = "html"))]
-pub mod encoding;
 #[cfg(feature = "epub")]
 pub mod epub;
 #[cfg(feature = "excel")]
 pub mod excel;
-#[cfg(feature = "html")]
-pub mod html;
 #[cfg(feature = "image")]
 pub mod image;
 #[cfg(feature = "json")]
@@ -111,16 +105,6 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::Audio => Ok(Box::new(audio::AudioConverter)),
         #[cfg(not(feature = "audio"))]
         Format::Audio => Err(crate::error::Error::FeatureDisabled("audio".into())),
-
-        #[cfg(feature = "csv")]
-        Format::Csv => Ok(Box::new(csv::CsvConverter)),
-        #[cfg(not(feature = "csv"))]
-        Format::Csv => Err(crate::error::Error::FeatureDisabled("csv".into())),
-
-        #[cfg(feature = "html")]
-        Format::Html => Ok(Box::new(html::HtmlConverter)),
-        #[cfg(not(feature = "html"))]
-        Format::Html => Err(crate::error::Error::FeatureDisabled("html".into())),
 
         #[cfg(feature = "json")]
         Format::Json => Ok(Box::new(json::JsonConverter)),

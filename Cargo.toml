@@ -23,7 +23,6 @@ path = "src/lib.rs"
 [features]
 asciidoc = []
 audio = ["dep:lofty"]
-csv = ["dep:csv", "dep:encoding_rs", "dep:chardetng", "dep:mq-markdown"]
 default = [
   "excel",
   "pdf",
@@ -33,8 +32,6 @@ default = [
   "zip",
   "epub",
   "audio",
-  "csv",
-  "html",
   "json",
   "yaml",
   "toml_conv",
@@ -59,7 +56,6 @@ default = [
 ]
 epub = ["dep:zip", "dep:quick-xml", "dep:mq-markdown"]
 excel = ["dep:calamine"]
-html = ["dep:mq-markdown", "dep:encoding_rs", "dep:chardetng"]
 image = ["dep:image", "dep:kamadak-exif"]
 json = ["dep:serde_json"]
 markdown_asciidoc = ["dep:mq-markdown"]
@@ -96,8 +92,6 @@ wasm = [
   "zip",
   "epub",
   "audio",
-  "csv",
-  "html",
   "json",
   "yaml",
   "toml_conv",
@@ -126,8 +120,6 @@ wasm_slim = [
   "word",
   "zip",
   "epub",
-  "csv",
-  "html",
   "json",
   "yaml",
   "toml_conv",
@@ -153,8 +145,6 @@ miette = {version = "7", features = ["fancy"]}
 thiserror = "2"
 
 calamine = {version = "0.37", optional = true}
-chardetng = {version = "1.0", optional = true}
-csv = {version = "1", optional = true}
 docx-rs = {version = "0.4", optional = true}
 encoding_rs = {version = "0.8", optional = true}
 epub-builder = {version = "0.8", optional = true}

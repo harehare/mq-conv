@@ -16,4 +16,3 @@ Each converter reconstructs Markdown structure from the source format's own layo
 
 - **Word / PowerPoint**: parsed directly from OOXML (`document.xml`, `slideN.xml`): headings, bold/italic, hyperlinks, list nesting, tables. No Office shell-out.
 - **Excel**: each sheet is split into blocks by blank rows, then each block is classified as table or free text.
-- **HTML**: delegated to mq-markdown's HTML-to-Markdown engine.

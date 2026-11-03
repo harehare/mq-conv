@@ -4,8 +4,9 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::converter::{ConvertOptions, Converter};
-use crate::formats::media::{MediaWriter, is_image_name, resolve_archive_path};
+use crate::document::{Block, Document};
 use crate::error::{Error, Result};
+use crate::formats::media::{MediaWriter, is_image_name, resolve_archive_path};
 
 pub struct EpubConverter;
 
@@ -64,35 +65,25 @@ impl Converter for EpubConverter {
         }
         options.check_pages("epub", "chapter", chapters.len())?;
 
-        // Write metadata
-        if let Some(title) = &metadata.title {
-            writeln!(writer, "# {title}")?;
-        } else {
-            writeln!(writer, "# EPUB")?;
-        }
-        writeln!(writer)?;
-
-        if let Some(author) = &metadata.author {
-            writeln!(writer, "**Author**: {author}")?;
-        }
-        if let Some(language) = &metadata.language {
-            writeln!(writer, "**Language**: {language}")?;
-        }
-        if let Some(publisher) = &metadata.publisher {
-            writeln!(writer, "**Publisher**: {publisher}")?;
-        }
-        if let Some(date) = &metadata.date {
-            writeln!(writer, "**Date**: {date}")?;
+        let mut doc = Document::new();
+        doc.push(Block::heading(
+            1,
+            metadata.title.as_deref().unwrap_or("EPUB"),
+        ));
+        for (label, value) in [
+            ("Author", &metadata.author),
+            ("Language", &metadata.language),
+            ("Publisher", &metadata.publisher),
+            ("Date", &metadata.date),
+        ] {
+            if let Some(value) = value {
+                doc.push(Block::field(label, value));
+            }
         }
         if let Some(description) = &metadata.description {
-            writeln!(writer)?;
-            writeln!(writer, "> {description}")?;
+            doc.push(Block::Quote(vec![Block::paragraph(description.as_str())]));
         }
 
-        writeln!(writer)?;
-        writeln!(writer, "---")?;
-
-        let mut first_written = true;
         for (idx, (full_path, text)) in chapters.iter().enumerate() {
             // Unselected chapters are skipped before any image is extracted.
             if !options.is_selected(idx as u32 + 1) {
@@ -105,15 +96,11 @@ impl Converter for EpubConverter {
                 }
                 None => text.clone(),
             };
-            if !std::mem::take(&mut first_written) {
-                writeln!(writer)?;
-                writeln!(writer, "---")?;
-            }
-            writeln!(writer)?;
-            writeln!(writer, "{}", text.trim())?;
+            doc.push(Block::Rule);
+            doc.push(Block::Markdown(text));
         }
 
-        Ok(())
+        doc.write_markdown(writer)
     }
 }
 
@@ -144,7 +131,10 @@ fn extract_markdown_images(
         let target = after[..end].trim();
         let target_path = target.split(['#', '?']).next().unwrap_or(target);
         let mut replaced = None;
-        if is_image_name(target_path) && !target_path.contains("://") && !target_path.starts_with("data:") {
+        if is_image_name(target_path)
+            && !target_path.contains("://")
+            && !target_path.starts_with("data:")
+        {
             let full = resolve_archive_path(chapter_dir, target_path);
             if let Ok(mut file) = archive.by_name(&full) {
                 let mut data = Vec::new();
@@ -447,14 +437,20 @@ mod tests {
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
         let mut files: Vec<(String, Vec<u8>)> = vec![
-            ("META-INF/container.xml".into(), container.as_bytes().to_vec()),
+            (
+                "META-INF/container.xml".into(),
+                container.as_bytes().to_vec(),
+            ),
             ("OEBPS/content.opf".into(), opf.into_bytes()),
         ];
         for (i, body) in bodies.iter().enumerate() {
             let chapter = format!(
                 r#"<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body>{body}</body></html>"#
             );
-            files.push((format!("OEBPS/chapter{}.xhtml", i + 1), chapter.into_bytes()));
+            files.push((
+                format!("OEBPS/chapter{}.xhtml", i + 1),
+                chapter.into_bytes(),
+            ));
         }
         files.extend(extra.iter().map(|(n, d)| (n.to_string(), d.to_vec())));
         for (name, data) in files {
@@ -480,17 +476,27 @@ mod tests {
     #[test]
     fn pages_select_chapters_in_reading_order() {
         let book = make_book(
-            &["<p>Alpha text.</p>", "<p>Bravo text.</p>", "<p>Charlie text.</p>"],
+            &[
+                "<p>Alpha text.</p>",
+                "<p>Bravo text.</p>",
+                "<p>Charlie text.</p>",
+            ],
             &[],
         );
         let out = convert_with(&book, &pages("2")).unwrap();
         assert!(out.starts_with("# My Book"), "{out}");
-        assert!(out.contains("Bravo") && !out.contains("Alpha") && !out.contains("Charlie"), "{out}");
+        assert!(
+            out.contains("Bravo") && !out.contains("Alpha") && !out.contains("Charlie"),
+            "{out}"
+        );
         // Only the separator after the book header: none before the first chapter.
         assert_eq!(out.matches("\n---\n").count(), 1, "{out}");
 
         let out = convert_with(&book, &pages("1,3")).unwrap();
-        assert!(out.contains("Alpha") && out.contains("Charlie") && !out.contains("Bravo"), "{out}");
+        assert!(
+            out.contains("Alpha") && out.contains("Charlie") && !out.contains("Bravo"),
+            "{out}"
+        );
         assert_eq!(out.matches("\n---\n").count(), 2, "{out}");
     }
 
@@ -498,9 +504,15 @@ mod tests {
     fn empty_chapters_are_not_numbered() {
         // A cover page without text is not a chapter in the output, so it
         // must not shift the numbers either.
-        let book = make_book(&["<div></div>", "<p>First real.</p>", "<p>Second real.</p>"], &[]);
+        let book = make_book(
+            &["<div></div>", "<p>First real.</p>", "<p>Second real.</p>"],
+            &[],
+        );
         let out = convert_with(&book, &pages("2")).unwrap();
-        assert!(out.contains("Second real.") && !out.contains("First real."), "{out}");
+        assert!(
+            out.contains("Second real.") && !out.contains("First real."),
+            "{out}"
+        );
     }
 
     #[test]

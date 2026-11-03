@@ -37,6 +37,8 @@ pub enum Block {
     },
     Quote(Vec<Block>),
     Rule,
+    /// Markdown that `mq-markdown` produced from another format, written as is.
+    Markdown(String),
     /// Rows of cells; the first row is the header.
     Table(Vec<Vec<Vec<Inline>>>),
 }
@@ -270,6 +272,7 @@ fn render_block(block: &Block) -> String {
         Block::Code { lang, text } => render_code(lang.as_deref(), text),
         Block::Quote(blocks) => render_quote(blocks),
         Block::Rule => "---\n".to_string(),
+        Block::Markdown(text) => format!("{}\n", text.trim()),
         Block::Table(rows) => render_table(rows),
     }
 }
@@ -720,6 +723,15 @@ mod tests {
         let mut c = vec![t("  a"), Inline::Strong(vec![t("b")]), t(" ")];
         trim_inlines(&mut c);
         assert_eq!(c, vec![t("a"), Inline::Strong(vec![t("b")])]);
+    }
+
+    #[test]
+    fn markdown_blocks_are_written_as_is() {
+        let d = doc(vec![
+            Block::paragraph("a"),
+            Block::Markdown("\n# *x*  \n".into()),
+        ]);
+        assert_eq!(markdown(&d), "a\n\n# *x*\n");
     }
 
     #[test]

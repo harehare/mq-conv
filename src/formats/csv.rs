@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use crate::ast;
 use crate::converter::Converter;
 use crate::error::{Error, Result};
 
@@ -21,48 +22,21 @@ impl Converter for CsvConverter {
             message: e.to_string(),
         })?;
 
-        let col_count = headers.len();
-        if col_count == 0 {
-            writeln!(writer, "*Empty CSV*")?;
-            return Ok(());
+        if headers.is_empty() {
+            return ast::write(writer, vec![ast::emphasis("Empty CSV")]);
         }
 
-        // Header row
-        write!(writer, "|")?;
-        for field in headers.iter() {
-            write!(writer, " {} |", escape_pipe(field))?;
-        }
-        writeln!(writer)?;
-
-        // Separator
-        write!(writer, "|")?;
-        for _ in 0..col_count {
-            write!(writer, "---|")?;
-        }
-        writeln!(writer)?;
-
-        // Data rows
+        let mut rows = vec![headers.iter().map(str::to_owned).collect::<Vec<_>>()];
         for result in reader.records() {
             let record = result.map_err(|e| Error::Conversion {
                 format: "csv",
                 message: e.to_string(),
             })?;
-            write!(writer, "|")?;
-            for i in 0..col_count {
-                let cell = record.get(i).unwrap_or("");
-                write!(writer, " {} |", escape_pipe(cell))?;
-            }
-            writeln!(writer)?;
+            rows.push(record.iter().map(str::to_owned).collect());
         }
 
-        Ok(())
+        ast::write(writer, ast::table(&rows))
     }
-}
-
-fn escape_pipe(s: &str) -> String {
-    s.replace('|', "\\|")
-        .replace("\r\n", "<br>")
-        .replace('\n', "<br>")
 }
 
 #[cfg(test)]
@@ -80,7 +54,7 @@ mod tests {
     fn converts_utf8_japanese_csv() {
         let output = convert("名前,年齢\n田中,30\n".as_bytes());
         assert!(output.contains("| 名前 | 年齢 |"), "{output}");
-        assert!(output.contains("| 田中 | 30 |"), "{output}");
+        assert!(output.contains("| 田中 | 30   |"), "{output}");
     }
 
     #[test]
@@ -88,7 +62,7 @@ mod tests {
         let (bytes, _, had_errors) = encoding_rs::SHIFT_JIS.encode("名前,部署\n山田太郎,営業部\n");
         assert!(!had_errors);
         let output = convert(&bytes);
-        assert!(output.contains("| 名前 | 部署 |"), "{output}");
+        assert!(output.contains("| 名前     | 部署   |"), "{output}");
         assert!(output.contains("| 山田太郎 | 営業部 |"), "{output}");
     }
 

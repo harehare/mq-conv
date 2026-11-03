@@ -23,7 +23,7 @@ path = "src/lib.rs"
 [features]
 asciidoc = []
 audio = ["dep:lofty"]
-csv = ["dep:csv", "dep:encoding_rs", "dep:chardetng"]
+csv = ["dep:csv", "dep:encoding_rs", "dep:chardetng", "dep:mq-markdown"]
 default = [
   "excel",
   "pdf",

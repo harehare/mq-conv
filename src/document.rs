@@ -49,8 +49,16 @@ pub enum Inline {
     Strong(Vec<Inline>),
     Strike(Vec<Inline>),
     Code(String),
-    Link { url: String, content: Vec<Inline> },
-    Image { url: String, alt: String },
+    Link {
+        url: String,
+        content: Vec<Inline>,
+    },
+    Image {
+        url: String,
+        alt: String,
+    },
+    /// A hard line break.
+    Break,
 }
 
 /// One line of a flat list, as most markup formats write them.
@@ -338,6 +346,8 @@ fn inlines(content: &[Inline], in_cell: bool) -> String {
             Inline::Strong(inner) => out.push_str(&wrap("**", inner, in_cell)),
             Inline::Strike(inner) => out.push_str(&wrap("~~", inner, in_cell)),
             Inline::Code(code) => out.push_str(&code_span(code)),
+            // A table row cannot hold a hard break; its newline becomes `<br>`.
+            Inline::Break => out.push_str(if in_cell { "\n" } else { "  \n" }),
             Inline::Link { url, content } => {
                 out.push_str(&format!(
                     "[{}]({})",
@@ -527,6 +537,18 @@ mod tests {
             },
         ])]);
         assert_eq!(markdown(&d), "a **b** *c* `d` [e](https://x.io)\n");
+    }
+
+    #[test]
+    fn a_break_is_two_spaces_and_a_newline_but_br_in_a_cell() {
+        let d = doc(vec![Block::Paragraph(vec![t("a"), Inline::Break, t("b")])]);
+        assert_eq!(markdown(&d), "a  \nb\n");
+        let d = doc(vec![Block::Table(vec![vec![vec![
+            t("a"),
+            Inline::Break,
+            t("b"),
+        ]]])]);
+        assert!(markdown(&d).contains("a<br>b"), "{}", markdown(&d));
     }
 
     #[test]

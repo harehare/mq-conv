@@ -1,4 +1,4 @@
-/* mq-conv book theme: same yellow palette as the landing page.
+/* mq-conv book theme: the landing page's near-black palette and yellow accent.
    Sidebar, menu bar and content share one background so the page reads as a single surface. */
 
 :root {
@@ -43,32 +43,32 @@ html:not(.js) {
 .navy,
 .coal,
 .ayu {
-  --bg: #1f1a0c;
-  --fg: #efe7cc;
-  --sidebar-bg: #1f1a0c;
-  --sidebar-fg: #d9cfa8;
-  --sidebar-non-existent: #8d835f;
+  --bg: #0e0e0e;
+  --fg: #f2f2f2;
+  --sidebar-bg: #0e0e0e;
+  --sidebar-fg: #d4d4d4;
+  --sidebar-non-existent: #6f6f6f;
   --sidebar-active: var(--mq-accent-bright);
-  --sidebar-spacer: #2e2711;
-  --scrollbar: #4d4020;
-  --icons: #a89d7e;
+  --sidebar-spacer: #1a1a1a;
+  --scrollbar: #2a2a2a;
+  --icons: #9a9a9a;
   --icons-hover: var(--mq-accent-bright);
   --links: var(--mq-accent-bright);
   --inline-code-color: var(--mq-accent-bright);
-  --theme-popup-bg: #272010;
-  --theme-popup-border: #4d4020;
-  --theme-hover: #2e2711;
-  --quote-bg: #272010;
+  --theme-popup-bg: #141414;
+  --theme-popup-border: #2a2a2a;
+  --theme-hover: #1a1a1a;
+  --quote-bg: #141414;
   --quote-border: var(--mq-accent);
-  --table-border-color: #4d4020;
-  --table-header-bg: #2e2711;
-  --table-alternate-bg: #241e0e;
-  --searchbar-border-color: #4d4020;
-  --searchbar-bg: #272010;
-  --searchbar-fg: #efe7cc;
-  --searchresults-header-fg: #a89d7e;
-  --searchresults-border-color: #4d4020;
-  --searchresults-li-bg: #272010;
+  --table-border-color: #2a2a2a;
+  --table-header-bg: #1a1a1a;
+  --table-alternate-bg: #121212;
+  --searchbar-border-color: #2a2a2a;
+  --searchbar-bg: #141414;
+  --searchbar-fg: #f2f2f2;
+  --searchresults-header-fg: #9a9a9a;
+  --searchresults-border-color: #2a2a2a;
+  --searchresults-li-bg: #141414;
   --search-mark-bg: #8a6a00;
 }
 
@@ -102,7 +102,7 @@ body {
 pre,
 .content pre > code,
 pre > .buttons {
-  background-color: #151107;
+  background-color: #080808;
 }
 .light pre,
 .light .content pre > code {

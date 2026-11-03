@@ -8,25 +8,25 @@ pub mod epub;
 pub mod excel;
 #[cfg(feature = "image")]
 pub mod image;
-pub mod media;
-#[cfg(feature = "markdown_docx")]
-pub mod markdown_docx;
-#[cfg(feature = "markdown_html")]
-pub mod markdown_html;
-#[cfg(feature = "markdown_text")]
-pub mod markdown_text;
-#[cfg(feature = "markdown_latex")]
-pub mod markdown_latex;
-#[cfg(feature = "markdown_rst")]
-pub mod markdown_rst;
 #[cfg(feature = "markdown_asciidoc")]
 pub mod markdown_asciidoc;
-#[cfg(feature = "markdown_org")]
-pub mod markdown_org;
+#[cfg(feature = "markdown_docx")]
+pub mod markdown_docx;
 #[cfg(feature = "markdown_epub_out")]
 pub mod markdown_epub_out;
+#[cfg(feature = "markdown_html")]
+pub mod markdown_html;
 #[cfg(feature = "markdown_json_ast")]
 pub mod markdown_json_ast;
+#[cfg(feature = "markdown_latex")]
+pub mod markdown_latex;
+#[cfg(feature = "markdown_org")]
+pub mod markdown_org;
+#[cfg(feature = "markdown_rst")]
+pub mod markdown_rst;
+#[cfg(feature = "markdown_text")]
+pub mod markdown_text;
+pub mod media;
 #[cfg(feature = "mediawiki")]
 pub mod mediawiki;
 #[cfg(feature = "ocr")]
@@ -133,7 +133,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(feature = "markdown_latex")]
         Format::MarkdownLatex => Ok(Box::new(markdown_latex::MarkdownLatexConverter)),
         #[cfg(not(feature = "markdown_latex"))]
-        Format::MarkdownLatex => Err(crate::error::Error::FeatureDisabled("markdown-latex".into())),
+        Format::MarkdownLatex => Err(crate::error::Error::FeatureDisabled(
+            "markdown-latex".into(),
+        )),
 
         #[cfg(feature = "markdown_rst")]
         Format::MarkdownRst => Ok(Box::new(markdown_rst::MarkdownRstConverter)),
@@ -143,7 +145,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(feature = "markdown_asciidoc")]
         Format::MarkdownAsciidoc => Ok(Box::new(markdown_asciidoc::MarkdownAsciidocConverter)),
         #[cfg(not(feature = "markdown_asciidoc"))]
-        Format::MarkdownAsciidoc => Err(crate::error::Error::FeatureDisabled("markdown-asciidoc".into())),
+        Format::MarkdownAsciidoc => Err(crate::error::Error::FeatureDisabled(
+            "markdown-asciidoc".into(),
+        )),
 
         #[cfg(feature = "markdown_org")]
         Format::MarkdownOrg => Ok(Box::new(markdown_org::MarkdownOrgConverter)),
@@ -158,7 +162,9 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         #[cfg(feature = "markdown_json_ast")]
         Format::MarkdownJsonAst => Ok(Box::new(markdown_json_ast::MarkdownJsonAstConverter)),
         #[cfg(not(feature = "markdown_json_ast"))]
-        Format::MarkdownJsonAst => Err(crate::error::Error::FeatureDisabled("markdown-json-ast".into())),
+        Format::MarkdownJsonAst => Err(crate::error::Error::FeatureDisabled(
+            "markdown-json-ast".into(),
+        )),
 
         #[cfg(feature = "rst")]
         Format::Rst => Ok(Box::new(rst::RstConverter)),

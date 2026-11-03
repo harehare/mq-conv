@@ -22,10 +22,12 @@ impl Converter for MarkdownTextConverter {
             message: format!("Input is not valid UTF-8: {e}"),
         })?;
 
-        let parsed = markdown.parse::<Markdown>().map_err(|e| Error::Conversion {
-            format: "markdown-text",
-            message: e.to_string(),
-        })?;
+        let parsed = markdown
+            .parse::<Markdown>()
+            .map_err(|e| Error::Conversion {
+                format: "markdown-text",
+                message: e.to_string(),
+            })?;
 
         let text = parsed.to_text();
         writer.write_all(text.as_bytes())?;

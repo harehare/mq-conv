@@ -402,7 +402,7 @@ fn test_form_xobject_text_is_extracted() {
         ),
         (6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()),
     ];
-    let mut offsets = vec![0usize; 7];
+    let mut offsets = [0usize; 7];
     for (n, body) in &objs {
         offsets[*n] = pdf.len();
         pdf.push_str(&format!("{n} 0 obj\n{body}\nendobj\n"));

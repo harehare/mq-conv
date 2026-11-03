@@ -32,9 +32,10 @@ pub enum Format {
 impl Format {
     pub fn detect(filename: Option<&str>, bytes: &[u8]) -> Option<Self> {
         if let Some(name) = filename
-            && let Some(fmt) = Self::from_extension(name) {
-                return Some(fmt);
-            }
+            && let Some(fmt) = Self::from_extension(name)
+        {
+            return Some(fmt);
+        }
         Self::from_magic_bytes(bytes)
     }
 
@@ -58,9 +59,7 @@ impl Format {
             "sqlite" | "sqlite3" | "db" => Some(Self::Sqlite),
             "tar" => Some(Self::Tar),
             "tgz" => Some(Self::Tar),
-            "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "flv" => {
-                Some(Self::Video)
-            }
+            "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "flv" => Some(Self::Video),
             "md" | "markdown" => Some(Self::MarkdownDocx),
             "rst" => Some(Self::Rst),
             "org" => Some(Self::Org),

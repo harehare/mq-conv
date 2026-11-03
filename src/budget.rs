@@ -476,7 +476,11 @@ mod tests {
             let mut code = String::new();
             for chunk in &chunks {
                 let lines: Vec<&str> = chunk.lines().collect();
-                assert_eq!(lines.first(), Some(&"```rust"), "budget {budget}: {chunk:?}");
+                assert_eq!(
+                    lines.first(),
+                    Some(&"```rust"),
+                    "budget {budget}: {chunk:?}"
+                );
                 assert_eq!(lines.last(), Some(&"```"), "budget {budget}: {chunk:?}");
                 assert!(lines.len() > 2, "budget {budget}: empty block {chunk:?}");
                 code.push_str(&lines[1..lines.len() - 1].concat());

@@ -1,13 +1,9 @@
 name: Deploy docs
 
+# Manual only until the deploy target exists. To deploy on every push to main,
+# add a `push` trigger on `main` with the paths `docs/**`, `assets/**`,
+# `bin/install.sh` and this file.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "assets/**"
-      - "bin/install.sh"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:

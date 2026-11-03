@@ -5,20 +5,21 @@ use std::collections::HashSet;
 
 use super::content::{ImagePlacement, LinkRect, PageContent, STYLE_BOLD, STYLE_MONO};
 use super::table::{Table, aligned_tables, ruled_tables};
-use super::words::{Line, Word, build_lines, plain, render_inline, text_width};
+use super::words::{Line, Word, build_lines, inline, plain, text_width};
+use crate::document::{self as doc, Inline};
 
 pub enum Block {
-    Heading(u8, String),
-    Paragraph(String),
+    Heading(u8, Vec<Inline>),
+    Paragraph(Vec<Inline>),
     ListItem {
         level: u8,
-        marker: Option<String>,
-        text: String,
+        /// The number of an ordered item, as printed in the PDF.
+        number: Option<usize>,
+        text: Vec<Inline>,
     },
     Code(Vec<String>),
     Table(Vec<Vec<String>>),
     Image(usize),
-    Raw(String),
 }
 
 #[derive(Default)]
@@ -501,7 +502,7 @@ enum Cur {
     Para(Vec<Line>),
     Item {
         level: u8,
-        marker: Option<String>,
+        number: Option<usize>,
         lines: Vec<Line>,
         text_x0: f32,
     },
@@ -533,7 +534,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn join(&self, lines: &[Line], emphasis: bool) -> String {
+    fn join(&self, lines: &[Line], emphasis: bool) -> Vec<Inline> {
         // Flatten to one word list so emphasis/link runs span line breaks, and
         // undo end-of-line hyphenation ("redirec-" + "tion").
         let mut words: Vec<Word> = Vec::new();
@@ -557,7 +558,7 @@ impl<'a> Builder<'a> {
             }
             words.extend(rest);
         }
-        render_inline(&words, self.links, emphasis)
+        inline(&words, self.links, emphasis)
     }
 
     fn flush(&mut self) {
@@ -574,23 +575,20 @@ impl<'a> Builder<'a> {
                     let text = self.join(&lines, false);
                     self.out.push(Block::Heading(level, text));
                 } else {
-                    let mut text = self.join(&lines, true);
-                    if text.starts_with(['#', '>']) {
-                        text.insert(0, '\\');
-                    }
+                    let text = self.join(&lines, true);
                     self.out.push(Block::Paragraph(text));
                 }
             }
             Cur::Item {
                 level,
-                marker,
+                number,
                 lines,
                 ..
             } => {
                 let text = self.join(&lines, true);
                 self.out.push(Block::ListItem {
                     level,
-                    marker,
+                    number,
                     text,
                 });
             }
@@ -680,7 +678,7 @@ impl<'a> Builder<'a> {
             let text = self.join(std::slice::from_ref(&entry), true);
             self.out.push(Block::ListItem {
                 level: 0,
-                marker: None,
+                number: None,
                 text,
             });
             return;
@@ -724,7 +722,7 @@ impl<'a> Builder<'a> {
             let level = ((l.x0 - base) / (1.5 * l.size)).round().clamp(0.0, 4.0) as u8;
             self.cur = Cur::Item {
                 level,
-                marker,
+                number: marker.and_then(|m| m.trim_end_matches('.').parse().ok()),
                 lines: vec![item],
                 text_x0,
             };
@@ -746,66 +744,47 @@ impl<'a> Builder<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Rendering
+// Conversion to the shared document model
 // ---------------------------------------------------------------------------
 
-fn escape_cell(s: &str) -> String {
-    s.replace('|', "\\|").replace('\n', " ")
-}
-
-pub fn render_blocks(blocks: &[Block]) -> String {
-    let mut out = String::new();
-    let mut prev_list = false;
-    for b in blocks {
-        let is_list = matches!(b, Block::ListItem { .. });
-        if !out.is_empty() && !(is_list && prev_list) {
-            out.push('\n');
-        }
-        prev_list = is_list;
-        match b {
-            Block::Heading(level, text) => {
-                out.push_str(&format!("{} {}\n", "#".repeat(*level as usize), text));
-            }
-            Block::Paragraph(text) => out.push_str(&format!("{text}\n")),
+/// The shared blocks for a page. `image` turns an image index into its block,
+/// or nothing when the image was not saved.
+pub fn into_document_blocks(
+    blocks: Vec<Block>,
+    mut image: impl FnMut(usize) -> Option<doc::Block>,
+) -> Vec<doc::Block> {
+    let mut out = doc::Builder::default();
+    for block in blocks {
+        match block {
+            Block::Heading(level, content) => out.push(doc::Block::Heading { level, content }),
+            Block::Paragraph(content) => out.push(doc::Block::Paragraph(content)),
             Block::ListItem {
                 level,
-                marker,
+                number: Some(n),
                 text,
-            } => {
-                let indent = "  ".repeat(*level as usize);
-                let m = marker.clone().unwrap_or_else(|| "-".to_string());
-                out.push_str(&format!("{indent}{m} {text}\n"));
-            }
-            Block::Code(lines) => {
-                out.push_str("```\n");
-                for l in lines {
-                    out.push_str(l);
-                    out.push('\n');
-                }
-                out.push_str("```\n");
-            }
+            } => out.numbered_item(level as usize, n, text),
+            Block::ListItem {
+                level,
+                number: None,
+                text,
+            } => out.item(level as usize, false, text),
+            Block::Code(lines) => out.push(doc::Block::Code {
+                lang: None,
+                text: lines.join("\n"),
+            }),
             Block::Table(rows) => {
-                if let Some(first) = rows.first() {
-                    let n = first.len();
-                    let row = |r: &Vec<String>| {
-                        format!(
-                            "| {} |\n",
-                            r.iter()
-                                .map(|c| escape_cell(c))
-                                .collect::<Vec<_>>()
-                                .join(" | ")
-                        )
-                    };
-                    out.push_str(&row(first));
-                    out.push_str(&format!("| {} |\n", vec!["---"; n].join(" | ")));
-                    for r in &rows[1..] {
-                        out.push_str(&row(r));
-                    }
+                let rows: Vec<Vec<String>> = rows
+                    .into_iter()
+                    .map(|r| r.into_iter().map(|c| c.replace('\n', " ")).collect())
+                    .collect();
+                out.push(doc::Block::text_table(&rows));
+            }
+            Block::Image(i) => {
+                if let Some(block) = image(i) {
+                    out.push(block);
                 }
             }
-            Block::Image(_) => {}
-            Block::Raw(s) => out.push_str(&format!("{s}\n")),
         }
     }
-    out
+    out.finish().blocks
 }

@@ -20,11 +20,14 @@ use std::io::Write;
 use lopdf::{Document, Object, ObjectId};
 
 use crate::converter::{ConvertOptions, Converter};
+use crate::document::{Block as MdBlock, Document as MdDocument, Inline, plain_text};
 use crate::error::{Error, Result};
 
 use crate::parallel::par_map;
 use content::{FontCache, PageContent, extract_page};
-use layout::{Block, DocStats, edge_keys, layout_page, render_blocks};
+#[cfg(feature = "ocr")]
+use layout::Block;
+use layout::{DocStats, edge_keys, into_document_blocks, layout_page};
 use util::{dict_get, resolve};
 use words::{Word, build_words};
 
@@ -123,11 +126,11 @@ impl Converter for PdfConverter {
         // The fallback describes the whole document. With `--pages` the caller
         // asked for specific pages, so each keeps its marker even when blank.
         if options.pages.is_none() && !any_text && !(any_image && cfg!(feature = "ocr")) {
-            writeln!(
-                writer,
-                "*PDF contains no extractable text (may be scanned/image-based)*"
-            )?;
-            return Ok(());
+            let mut doc = MdDocument::new();
+            doc.push(MdBlock::emphasized(
+                "PDF contains no extractable text (may be scanned/image-based)",
+            ));
+            return doc.write_markdown(writer);
         }
 
         // Phase 2: layout + rendering (parallel).
@@ -135,38 +138,41 @@ impl Converter for PdfConverter {
         if let Some(dir) = image_dir {
             std::fs::create_dir_all(dir)?;
         }
-        let rendered: Vec<Option<String>> = par_map(&prepared, |p| match p {
+        let rendered: Vec<Option<Vec<MdBlock>>> = par_map(&prepared, |p| match p {
             Some(p) if selected(p.number) => render_page(&doc, p, &stats, options),
-            _ => String::new(),
+            _ => Vec::new(),
         });
 
-        let mut markdown = String::new();
-        for (i, (page, text)) in pages.iter().zip(rendered).enumerate() {
+        let mut pages_doc = MdDocument::new();
+        for (i, (page, blocks)) in pages.iter().zip(rendered).enumerate() {
             if !selected(page.0) {
                 continue;
             }
-            if !markdown.is_empty() {
-                markdown.push('\n');
-            }
-            markdown.push_str(&format!(
-                "{PAGE_MARKER_PREFIX}{}{PAGE_MARKER_SUFFIX}\n\n",
+            pages_doc.push(MdBlock::Markdown(format!(
+                "{PAGE_MARKER_PREFIX}{}{PAGE_MARKER_SUFFIX}",
                 page.0
-            ));
-            match text {
-                Some(t) if prepared[i].is_some() => markdown.push_str(&t),
-                _ => markdown.push_str("<!-- page extraction failed -->\n"),
+            )));
+            match blocks {
+                Some(blocks) if prepared[i].is_some() => pages_doc.extend(blocks),
+                _ => pages_doc.push(MdBlock::Markdown("<!-- page extraction failed -->".into())),
             }
         }
 
-        let body_title = body_leading_heading(&markdown);
+        let body_title = body_leading_heading(&pages_doc.blocks);
         let meta = read_metadata(&doc);
-        writeln!(writer, "{}", write_metadata(&meta, body_title.as_deref()))?;
-        write!(writer, "{markdown}")?;
-        Ok(())
+        let mut out = MdDocument::new();
+        out.extend(metadata_blocks(&meta, body_title.as_deref()));
+        out.extend(pages_doc.blocks);
+        out.write_markdown(writer)
     }
 }
 
-fn render_page(doc: &Document, p: &Prepared, stats: &DocStats, options: &ConvertOptions) -> String {
+fn render_page(
+    doc: &Document,
+    p: &Prepared,
+    stats: &DocStats,
+    options: &ConvertOptions,
+) -> Vec<MdBlock> {
     let with_images = options.image_dir.is_some();
     let blocks = layout_page(&p.content, p.words.clone(), stats, with_images);
 
@@ -179,28 +185,36 @@ fn render_page(doc: &Document, p: &Prepared, stats: &DocStats, options: &Convert
     #[cfg(not(feature = "ocr"))]
     let ocr_text: Option<String> = None;
 
-    let blocks: Vec<Block> = blocks
-        .into_iter()
-        .map(|b| match b {
-            Block::Image(i) => {
-                let placed = &p.content.images[i];
-                match save_image(doc, placed.id, p.number, i, options) {
-                    Some(path) => Block::Raw(format!("![image]({path})")),
-                    None => Block::Raw(String::new()),
-                }
-            }
-            other => other,
-        })
-        .filter(|b| !matches!(b, Block::Raw(s) if s.is_empty()))
-        .collect();
-    let mut out = render_blocks(&blocks);
+    let mut out = into_document_blocks(blocks, |i| {
+        let placed = &p.content.images[i];
+        let url = save_image(doc, placed.id, p.number, i, options)?;
+        Some(MdBlock::Paragraph(vec![Inline::Image {
+            url,
+            alt: "image".to_string(),
+        }]))
+    });
     if let Some(text) = ocr_text {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&text);
+        out.extend(text_blocks(&text));
     }
     out
+}
+
+/// Plain text as paragraphs: blank lines separate them, line ends are kept.
+fn text_blocks(text: &str) -> Vec<MdBlock> {
+    text.split("\n\n")
+        .map(|paragraph| {
+            let mut content = Vec::new();
+            for (i, line) in paragraph.lines().enumerate() {
+                if i > 0 {
+                    content.push(Inline::Break);
+                }
+                content.push(Inline::Text(line.to_string()));
+            }
+            content
+        })
+        .filter(|content| !content.is_empty())
+        .map(MdBlock::Paragraph)
+        .collect()
 }
 
 fn save_image(
@@ -338,29 +352,27 @@ fn read_metadata(doc: &Document) -> Metadata {
     meta
 }
 
-fn is_page_marker(line: &str) -> bool {
-    line.starts_with(PAGE_MARKER_PREFIX) && line.ends_with(PAGE_MARKER_SUFFIX)
+fn is_page_marker(block: &MdBlock) -> bool {
+    matches!(block, MdBlock::Markdown(t)
+        if t.starts_with(PAGE_MARKER_PREFIX) && t.ends_with(PAGE_MARKER_SUFFIX))
 }
 
-fn body_leading_heading(markdown: &str) -> Option<String> {
-    for line in markdown.lines() {
-        let t = line.trim();
-        if t.is_empty() || is_page_marker(t) {
-            continue;
-        }
-        return t.strip_prefix("# ").map(|s| s.trim().to_string());
+/// The title of the first block after the page markers, when it is a level 1 heading.
+fn body_leading_heading(blocks: &[MdBlock]) -> Option<String> {
+    match blocks.iter().find(|b| !is_page_marker(b))? {
+        MdBlock::Heading { level: 1, content } => Some(plain_text(content).trim().to_string()),
+        _ => None,
     }
-    None
 }
 
-fn write_metadata(meta: &Metadata, body_title: Option<&str>) -> String {
-    let mut out = String::new();
+fn metadata_blocks(meta: &Metadata, body_title: Option<&str>) -> Vec<MdBlock> {
+    let mut out = Vec::new();
     let meta_title = meta.title.as_deref();
 
     match (meta_title, body_title) {
         (_, Some(_)) => {}
-        (Some(title), None) => out.push_str(&format!("# {title}\n\n")),
-        (None, None) => out.push_str("# PDF Document\n\n"),
+        (Some(title), None) => out.push(MdBlock::heading(1, title)),
+        (None, None) => out.push(MdBlock::heading(1, "PDF Document")),
     }
 
     let mut fields: Vec<(&str, String)> = Vec::new();
@@ -381,13 +393,23 @@ fn write_metadata(meta: &Metadata, body_title: Option<&str>) -> String {
             fields.push((label, v.clone()));
         }
     }
-    for (label, value) in &fields {
-        out.push_str(&format!("- **{label}**: {value}\n"));
-    }
     if !fields.is_empty() {
-        out.push('\n');
+        let items = fields
+            .into_iter()
+            .map(|(label, value)| {
+                vec![MdBlock::Paragraph(vec![
+                    Inline::Strong(vec![Inline::Text(label.to_string())]),
+                    Inline::Text(format!(": {value}")),
+                ])]
+            })
+            .collect();
+        out.push(MdBlock::List {
+            ordered: false,
+            start: 1,
+            items,
+        });
     }
-    out.push_str("---\n");
+    out.push(MdBlock::Rule);
     out
 }
 

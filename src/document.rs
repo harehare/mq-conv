@@ -28,6 +28,8 @@ pub enum Block {
     /// Each item is a sequence of blocks; a nested list is a block of its item.
     List {
         ordered: bool,
+        /// The number of the first item of a numbered list.
+        start: usize,
         items: Vec<Vec<Block>>,
     },
     /// Preformatted text, with an optional info string such as the language.
@@ -69,6 +71,8 @@ pub struct FlatItem {
     /// Nesting depth, 0 for the outermost list.
     pub depth: usize,
     pub ordered: bool,
+    /// The number the source gave this item, if it kept one.
+    pub number: Option<usize>,
     pub content: Vec<Inline>,
 }
 
@@ -94,6 +98,20 @@ pub fn trim_inlines(content: &mut Vec<Inline>) {
         *last = last.trim_end().to_string();
     }
     content.retain(|i| !matches!(i, Inline::Text(t) if t.is_empty()));
+}
+
+/// The text of `content` without any marks.
+pub fn plain_text(content: &[Inline]) -> String {
+    content
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text(t) | Inline::Code(t) => t.clone(),
+            Inline::Emphasis(i) | Inline::Strong(i) | Inline::Strike(i) => plain_text(i),
+            Inline::Link { content, .. } => plain_text(content),
+            Inline::Image { alt, .. } => alt.clone(),
+            Inline::Break => " ".to_string(),
+        })
+        .collect()
 }
 
 impl Block {
@@ -173,6 +191,7 @@ impl Block {
         depth: usize,
     ) -> Block {
         let ordered = items.peek().is_some_and(|i| i.ordered);
+        let start = items.peek().and_then(|i| i.number).unwrap_or(1);
         let mut list_items: Vec<Vec<Block>> = Vec::new();
         while let Some(item) = items.peek() {
             if item.depth < depth || (item.depth == depth && item.ordered != ordered) {
@@ -192,6 +211,7 @@ impl Block {
         }
         Block::List {
             ordered,
+            start,
             items: list_items,
         }
     }
@@ -241,6 +261,17 @@ impl Builder {
         self.items.push(FlatItem {
             depth,
             ordered,
+            number: None,
+            content,
+        });
+    }
+
+    /// Adds a numbered list item that keeps the number the source gave it.
+    pub fn numbered_item(&mut self, depth: usize, number: usize, content: Vec<Inline>) {
+        self.items.push(FlatItem {
+            depth,
+            ordered: true,
+            number: Some(number),
             content,
         });
     }
@@ -268,7 +299,11 @@ fn render_block(block: &Block) -> String {
             format!("{} {}\n", "#".repeat(level), inlines(content, false))
         }
         Block::Paragraph(content) => format!("{}\n", inlines(content, false)),
-        Block::List { ordered, items } => render_list(*ordered, items),
+        Block::List {
+            ordered,
+            start,
+            items,
+        } => render_list(*ordered, *start, items),
         Block::Code { lang, text } => render_code(lang.as_deref(), text),
         Block::Quote(blocks) => render_quote(blocks),
         Block::Rule => "---\n".to_string(),
@@ -277,11 +312,11 @@ fn render_block(block: &Block) -> String {
     }
 }
 
-fn render_list(ordered: bool, items: &[Vec<Block>]) -> String {
+fn render_list(ordered: bool, start: usize, items: &[Vec<Block>]) -> String {
     let mut out = String::new();
     for (n, item) in items.iter().enumerate() {
         let marker = if ordered {
-            format!("{}. ", n + 1)
+            format!("{}. ", start + n)
         } else {
             "- ".to_string()
         };
@@ -515,6 +550,7 @@ mod tests {
         FlatItem {
             depth,
             ordered,
+            number: None,
             content: vec![t(text)],
         }
     }
@@ -732,6 +768,30 @@ mod tests {
             Block::Markdown("\n# *x*  \n".into()),
         ]);
         assert_eq!(markdown(&d), "a\n\n# *x*\n");
+    }
+
+    #[test]
+    fn a_numbered_list_keeps_the_number_it_starts_at() {
+        let items = vec![
+            FlatItem {
+                depth: 0,
+                ordered: true,
+                number: Some(3),
+                content: vec![t("c")],
+            },
+            item(0, true, "d"),
+        ];
+        assert_eq!(markdown(&doc(Block::lists(items))), "3. c\n4. d\n");
+    }
+
+    #[test]
+    fn plain_text_drops_the_marks() {
+        let c = vec![
+            t("a "),
+            Inline::Strong(vec![t("b")]),
+            Inline::Code("c".into()),
+        ];
+        assert_eq!(plain_text(&c), "a bc");
     }
 
     #[test]

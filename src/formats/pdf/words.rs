@@ -1,4 +1,6 @@
-//! Glyphs → words → lines, plus inline Markdown rendering of word runs.
+//! Glyphs → words → lines, plus inlines for word runs.
+
+use crate::document::Inline;
 
 use super::content::{Glyph, LinkRect, STYLE_BOLD, STYLE_ITALIC, STYLE_MONO};
 
@@ -196,24 +198,17 @@ pub fn plain(words: &[Word]) -> String {
     out
 }
 
-fn wrap(text: &str, style: u8, whole_mono: bool) -> String {
-    let mut t = text.to_string();
-    if style & STYLE_MONO != 0 && !whole_mono {
-        return format!("`{}`", t.replace('`', "'"));
+/// A run of words in one style.
+fn styled(text: String, style: u8) -> Inline {
+    if style & STYLE_MONO != 0 {
+        return Inline::Code(text);
     }
-    if style & STYLE_BOLD != 0 && style & STYLE_ITALIC != 0 {
-        t = format!("***{t}***");
-    } else if style & STYLE_BOLD != 0 {
-        t = format!("**{t}**");
-    } else if style & STYLE_ITALIC != 0 {
-        t = format!("*{t}*");
-    }
-    t
+    Inline::styled(text, style & STYLE_BOLD != 0, style & STYLE_ITALIC != 0)
 }
 
-/// Render words to inline Markdown, applying emphasis and links.
-pub fn render_inline(words: &[Word], links: &[LinkRect], emphasis: bool) -> String {
-    let mut out = String::new();
+/// Words as inlines, applying emphasis (when asked) and links.
+pub fn inline(words: &[Word], links: &[LinkRect], emphasis: bool) -> Vec<Inline> {
+    let mut out = Vec::new();
     let mut i = 0;
     while i < words.len() {
         let key = |w: &Word| (if emphasis { w.style } else { 0 }, w.link);
@@ -222,18 +217,22 @@ pub fn render_inline(words: &[Word], links: &[LinkRect], emphasis: bool) -> Stri
         while j < words.len() && key(&words[j]) == k {
             j += 1;
         }
-        let run = &words[i..j];
-        let mut text = plain(run);
-        if emphasis {
-            text = wrap(&text, k.0, false);
-        }
+        let text = plain(&words[i..j]);
+        let mut node = if emphasis {
+            styled(text, k.0)
+        } else {
+            Inline::Text(text)
+        };
         if let Some(l) = k.1.and_then(|l| links.get(l)) {
-            text = format!("[{text}]({})", l.url);
+            node = Inline::Link {
+                url: l.url.clone(),
+                content: vec![node],
+            };
         }
         if i > 0 && needs_space(&words[i - 1], &words[i]) {
-            out.push(' ');
+            out.push(Inline::Text(" ".to_string()));
         }
-        out.push_str(&text);
+        out.push(node);
         i = j;
     }
     out

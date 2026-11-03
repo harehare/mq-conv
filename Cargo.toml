@@ -23,33 +23,7 @@ path = "src/lib.rs"
 [features]
 asciidoc = []
 audio = ["dep:lofty"]
-default = [
-  "excel",
-  "pdf",
-  "powerpoint",
-  "word",
-  "image",
-  "zip",
-  "epub",
-  "audio",
-  "sqlite",
-  "tar",
-  "video",
-  "markdown_docx",
-  "markdown_html",
-  "markdown_text",
-  "markdown_latex",
-  "markdown_rst",
-  "markdown_asciidoc",
-  "markdown_org",
-  "markdown_epub_out",
-  "markdown_json_ast",
-  "rst",
-  "org",
-  "mediawiki",
-  "asciidoc",
-  "query",
-]
+default = ["documents", "markup", "writers", "media", "sqlite", "query"]
 epub = ["dep:zip", "dep:quick-xml"]
 excel = ["dep:calamine"]
 image = ["dep:image", "dep:kamadak-exif"]
@@ -75,17 +49,11 @@ video = ["dep:lofty"]
 word = ["dep:zip", "dep:quick-xml"]
 zip = ["dep:zip"]
 
-wasm = [
-  "excel",
-  "pdf",
-  "powerpoint",
-  "word",
-  "image",
-  "zip",
-  "epub",
-  "audio",
-  "tar",
-  "video",
+# Feature groups.
+documents = ["excel", "pdf", "powerpoint", "word", "epub", "zip"]
+markup = ["rst", "org", "mediawiki", "asciidoc"]
+media = ["image", "audio", "video", "tar"]
+writers = [
   "markdown_docx",
   "markdown_html",
   "markdown_text",
@@ -95,33 +63,11 @@ wasm = [
   "markdown_org",
   "markdown_epub_out",
   "markdown_json_ast",
-  "rst",
-  "org",
-  "mediawiki",
-  "asciidoc",
 ]
 
-wasm_slim = [
-  "excel",
-  "pdf",
-  "powerpoint",
-  "word",
-  "zip",
-  "epub",
-  "markdown_docx",
-  "markdown_html",
-  "markdown_text",
-  "markdown_latex",
-  "markdown_rst",
-  "markdown_asciidoc",
-  "markdown_org",
-  "markdown_epub_out",
-  "markdown_json_ast",
-  "rst",
-  "org",
-  "mediawiki",
-  "asciidoc",
-]
+# WebAssembly builds leave out sqlite, query and ocr, which need native code.
+wasm = ["documents", "markup", "writers", "media"]
+wasm_slim = ["documents", "markup", "writers"]
 
 [dependencies]
 clap = {version = "4.6", features = ["derive"]}

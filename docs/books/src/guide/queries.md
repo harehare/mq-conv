@@ -16,4 +16,4 @@ mq-conv report.pdf -q '.h2 | select(contains("Results"))'
 mq-conv manual.pdf -q '.h2 | select(tokens(.) < 500)'
 ```
 
-A query runs once per top-level node, as in `mq`. The `query` feature is on by default and adds about 2.4 MB to the release binary. Build with `--no-default-features` and pick formats to leave it out. It is not part of the WebAssembly builds.
+A query runs once per top-level node, as in `mq`. The `query` feature is on by default and adds about 2 MB to the release binary. Build with `--no-default-features` and pick formats to leave it out. It is not part of the WebAssembly builds.

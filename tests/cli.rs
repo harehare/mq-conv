@@ -182,6 +182,19 @@ fn query_errors_are_reported() {
 }
 
 #[test]
+fn to_writes_any_input_in_another_format() {
+    let dir = org_dir("to");
+    let out = run(&dir, &["guide.org", "--to", "html"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("<h1>Guide</h1>"), "{}", stdout(&out));
+
+    std::fs::write(dir.join("notes.md"), "# Notes\n").unwrap();
+    let md = run(&dir, &["notes.md", "--to", "html"]);
+    assert!(stdout(&md).contains("<h1>Notes</h1>"), "{}", stdout(&md));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn pages_is_rejected_for_non_pdf_input() {
     let dir = org_dir("pages");
     let out = run(&dir, &["guide.org", "--pages", "1"]);

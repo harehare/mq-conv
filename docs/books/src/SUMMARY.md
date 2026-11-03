@@ -11,7 +11,7 @@
   - [Token Budgeting](guide/tokens.md)
   - [Page Selection](guide/pages.md)
   - [Images and OCR](guide/images-ocr.md)
-  - [Markdown to Other Formats](guide/markdown-out.md)
+  - [Other Output Formats](guide/markdown-out.md)
   - [How Conversion Works](guide/how-it-works.md)
 - [Reference](reference/index.md)
   - [CLI](reference/cli.md)

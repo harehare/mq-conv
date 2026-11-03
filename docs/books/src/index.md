@@ -18,7 +18,7 @@ mq-conv book.pdf --max-tokens 4000 # one prompt-sized chunk at a time
 - [Token budgeting](guide/tokens.md) and [page selection](guide/pages.md)
 - Built-in [mq queries](guide/queries.md)
 - [Image extraction and OCR](guide/images-ocr.md)
-- [Markdown to docx, HTML, LaTeX, EPUB and more](guide/markdown-out.md)
+- [Any input to docx, HTML, LaTeX, EPUB and more](guide/markdown-out.md)
 - Feature flags per format and a [WebAssembly](reference/wasm.md) build
 
 Head to [Getting Started](start/index.md) to install it and convert your first file.

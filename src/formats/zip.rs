@@ -1,7 +1,9 @@
 use std::io::{Cursor, Write};
 
 use crate::converter::Converter;
+use crate::document::{Block, Document};
 use crate::error::{Error, Result};
+use crate::formats::media::format_size;
 
 pub struct ZipConverter;
 
@@ -21,20 +23,15 @@ impl Converter for ZipConverter {
         let mut total_compressed: u64 = 0;
         let count = archive.len();
 
-        writeln!(writer, "# Archive")?;
-        writeln!(writer)?;
-        writeln!(writer, "**Total entries**: {count}")?;
-        writeln!(writer)?;
+        let mut doc = Document::new();
+        doc.push(Block::heading(1, "Archive"));
+        doc.push(Block::field("Total entries", count));
 
-        writeln!(
-            writer,
-            "| # | Name | Size | Compressed | Method |"
-        )?;
-        writeln!(
-            writer,
-            "|---|------|------|------------|--------|"
-        )?;
-
+        let mut rows = vec![
+            ["#", "Name", "Size", "Compressed", "Method"]
+                .map(String::from)
+                .to_vec(),
+        ];
         for i in 0..count {
             let entry = archive.by_index(i).map_err(|e| Error::Conversion {
                 format: "zip",
@@ -50,8 +47,6 @@ impl Converter for ZipConverter {
                 .into_owned();
             let size = entry.size();
             let compressed = entry.compressed_size();
-            let method = format!("{:?}", entry.compression());
-
             total_uncompressed += size;
             total_compressed += compressed;
 
@@ -60,15 +55,16 @@ impl Converter for ZipConverter {
             } else {
                 (format_size(size), format_size(compressed))
             };
-
-            writeln!(
-                writer,
-                "| {idx} | {name} | {size_str} | {compressed_str} | {method} |",
-                idx = i + 1,
-            )?;
+            rows.push(vec![
+                (i + 1).to_string(),
+                name,
+                size_str,
+                compressed_str,
+                format!("{:?}", entry.compression()),
+            ]);
         }
+        doc.push(Block::text_table(&rows));
 
-        writeln!(writer)?;
         let ratio = if total_uncompressed > 0 {
             format!(
                 "{:.1}%",
@@ -77,29 +73,45 @@ impl Converter for ZipConverter {
         } else {
             "N/A".to_string()
         };
-        writeln!(
-            writer,
-            "**Total size**: {} (compressed: {}, ratio: {ratio})",
-            format_size(total_uncompressed),
-            format_size(total_compressed),
-        )?;
-
-        Ok(())
+        doc.push(Block::field(
+            "Total size",
+            format!(
+                "{} (compressed: {}, ratio: {ratio})",
+                format_size(total_uncompressed),
+                format_size(total_compressed)
+            ),
+        ));
+        doc.write_markdown(writer)
     }
 }
 
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} B")
+    #[test]
+    fn lists_entries_and_the_compression_ratio() {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zip = ::zip::ZipWriter::new(&mut buf);
+            let options = ::zip::write::SimpleFileOptions::default()
+                .compression_method(::zip::CompressionMethod::Deflated);
+            zip.start_file("a.txt", options).unwrap();
+            zip.write_all(&[b'a'; 4096]).unwrap();
+            zip.finish().unwrap();
+        }
+        let mut out = Vec::new();
+        ZipConverter.convert(&buf.into_inner(), &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(
+            out.starts_with("# Archive\n\n**Total entries**: 1\n\n"),
+            "{out}"
+        );
+        assert!(out.contains("| 1 | a.txt "), "{out}");
+        assert!(out.contains("4.0 KB"), "{out}");
+        assert!(
+            out.contains("**Total size**: 4.0 KB (compressed: "),
+            "{out}"
+        );
     }
 }

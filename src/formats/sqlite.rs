@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use crate::converter::Converter;
+use crate::document::{Block, Document};
 use crate::error::{Error, Result};
 
 pub struct SqliteConverter;
@@ -24,14 +25,12 @@ impl Converter for SqliteConverter {
 }
 
 fn convert_db(path: &std::path::Path, writer: &mut dyn Write) -> Result<()> {
-    let conn = rusqlite::Connection::open_with_flags(
-        path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .map_err(|e| Error::Conversion {
-        format: "sqlite",
-        message: e.to_string(),
-    })?;
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| Error::Conversion {
+                format: "sqlite",
+                message: e.to_string(),
+            })?;
 
     // Get all table names
     let mut stmt = conn
@@ -50,21 +49,16 @@ fn convert_db(path: &std::path::Path, writer: &mut dyn Write) -> Result<()> {
         .filter_map(|r| r.ok())
         .collect();
 
-    writeln!(writer, "# Database")?;
-    writeln!(writer)?;
-    writeln!(writer, "**Tables**: {}", tables.len())?;
-    writeln!(writer)?;
+    let mut doc = Document::new();
+    doc.push(Block::heading(1, "Database"));
+    doc.push(Block::field("Tables", tables.len()));
 
-    for (idx, table) in tables.iter().enumerate() {
-        if idx > 0 {
-            writeln!(writer)?;
-        }
-        writeln!(writer, "## {table}")?;
-        writeln!(writer)?;
+    for table in &tables {
+        doc.push(Block::heading(2, table));
+        let quoted = table.replace('"', "\"\"");
 
-        // Get column info
         let mut col_stmt = conn
-            .prepare(&format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\"")))
+            .prepare(&format!("PRAGMA table_info(\"{quoted}\")"))
             .map_err(|e| Error::Conversion {
                 format: "sqlite",
                 message: e.to_string(),
@@ -85,92 +79,106 @@ fn convert_db(path: &std::path::Path, writer: &mut dyn Write) -> Result<()> {
             .filter_map(|r| r.ok())
             .collect();
 
-        // Schema
-        writeln!(writer, "| Column | Type | PK |")?;
-        writeln!(writer, "|--------|------|----|")?;
+        let mut schema = vec![["Column", "Type", "PK"].map(String::from).to_vec()];
         for (name, dtype, pk) in &columns {
             let pk_mark = if *pk { "yes" } else { "" };
-            writeln!(writer, "| {name} | {dtype} | {pk_mark} |")?;
+            schema.push(vec![name.clone(), dtype.clone(), pk_mark.to_string()]);
         }
-        writeln!(writer)?;
+        doc.push(Block::text_table(&schema));
 
-        // Row count
         let count: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM \"{}\"", table.replace('"', "\"\"")),
-                [],
-                |row| row.get(0),
-            )
+            .query_row(&format!("SELECT COUNT(*) FROM \"{quoted}\""), [], |row| {
+                row.get(0)
+            })
             .unwrap_or(0);
+        doc.push(Block::field("Rows", count));
 
-        writeln!(writer, "**Rows**: {count}")?;
-
-        // Preview first 10 rows
         if count > 0 && !columns.is_empty() {
-            writeln!(writer)?;
+            let mut preview = vec![
+                columns
+                    .iter()
+                    .map(|(n, _, _)| n.clone())
+                    .collect::<Vec<_>>(),
+            ];
 
-            let col_names: Vec<&str> = columns.iter().map(|(n, _, _)| n.as_str()).collect();
-
-            // Header
-            write!(writer, "|")?;
-            for name in &col_names {
-                write!(writer, " {name} |")?;
-            }
-            writeln!(writer)?;
-
-            // Separator
-            write!(writer, "|")?;
-            for _ in &col_names {
-                write!(writer, "---|")?;
-            }
-            writeln!(writer)?;
-
-            // Data (limit to 10 rows)
-            let query = format!(
-                "SELECT * FROM \"{}\" LIMIT 10",
-                table.replace('"', "\"\"")
-            );
-            let mut data_stmt = conn.prepare(&query).map_err(|e| Error::Conversion {
-                format: "sqlite",
-                message: e.to_string(),
-            })?;
-
-            let col_count = columns.len();
+            let mut data_stmt = conn
+                .prepare(&format!("SELECT * FROM \"{quoted}\" LIMIT 10"))
+                .map_err(|e| Error::Conversion {
+                    format: "sqlite",
+                    message: e.to_string(),
+                })?;
             let mut rows = data_stmt.query([]).map_err(|e| Error::Conversion {
                 format: "sqlite",
                 message: e.to_string(),
             })?;
-
             while let Some(row) = rows.next().map_err(|e| Error::Conversion {
                 format: "sqlite",
                 message: e.to_string(),
             })? {
-                write!(writer, "|")?;
-                for i in 0..col_count {
-                    let val: String = row
-                        .get::<_, rusqlite::types::Value>(i)
-                        .map(|v| match v {
-                            rusqlite::types::Value::Null => "NULL".to_string(),
-                            rusqlite::types::Value::Integer(n) => n.to_string(),
-                            rusqlite::types::Value::Real(f) => f.to_string(),
-                            rusqlite::types::Value::Text(s) => s
-                                .replace('|', "\\|")
-                                .replace("\r\n", "<br>")
-                                .replace('\n', "<br>"),
-                            rusqlite::types::Value::Blob(b) => format!("[BLOB {} bytes]", b.len()),
+                preview.push(
+                    (0..columns.len())
+                        .map(|i| {
+                            row.get::<_, rusqlite::types::Value>(i)
+                                .map(|v| match v {
+                                    rusqlite::types::Value::Null => "NULL".to_string(),
+                                    rusqlite::types::Value::Integer(n) => n.to_string(),
+                                    rusqlite::types::Value::Real(f) => f.to_string(),
+                                    rusqlite::types::Value::Text(s) => s,
+                                    rusqlite::types::Value::Blob(b) => {
+                                        format!("(BLOB, {} bytes)", b.len())
+                                    }
+                                })
+                                .unwrap_or_default()
                         })
-                        .unwrap_or_default();
-                    write!(writer, " {val} |")?;
-                }
-                writeln!(writer)?;
+                        .collect(),
+                );
             }
+            doc.push(Block::text_table(&preview));
 
             if count > 10 {
-                writeln!(writer)?;
-                writeln!(writer, "*Showing 10 of {count} rows*")?;
+                doc.push(Block::emphasized(format!("Showing 10 of {count} rows")));
             }
         }
     }
 
-    Ok(())
+    doc.write_markdown(writer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn database() -> Vec<u8> {
+        let path = std::env::temp_dir().join(format!("mq-conv-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE t (id INTEGER PRIMARY KEY, note TEXT);
+                 INSERT INTO t VALUES (1, 'a|b'), (2, NULL);
+                 CREATE TABLE empty (x INTEGER);",
+            )
+            .unwrap();
+            for n in 3..=13 {
+                conn.execute("INSERT INTO t VALUES (?1, 'x')", [n]).unwrap();
+            }
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        bytes
+    }
+
+    #[test]
+    fn describes_tables_schema_and_a_preview() {
+        let mut out = Vec::new();
+        SqliteConverter.convert(&database(), &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.starts_with("# Database\n\n**Tables**: 2\n\n"), "{out}");
+        assert!(out.contains("## empty\n\n"), "{out}");
+        assert!(out.contains("| id     | INTEGER | yes |"), "{out}");
+        assert!(out.contains("**Rows**: 13"), "{out}");
+        assert!(out.contains("a\\|b"), "{out}");
+        assert!(out.contains("NULL"), "{out}");
+        assert!(out.ends_with("*Showing 10 of 13 rows*\n"), "{out}");
+    }
 }

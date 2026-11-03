@@ -1,7 +1,9 @@
 use std::io::{Cursor, Write};
 
 use crate::converter::Converter;
+use crate::document::{Block, Document};
 use crate::error::{Error, Result};
+use crate::formats::media::format_size;
 
 pub struct ImageConverter;
 
@@ -11,14 +13,18 @@ impl Converter for ImageConverter {
     }
 
     fn convert(&self, input: &[u8], writer: &mut dyn Write) -> Result<()> {
+        let mut doc = Document::new();
+        doc.push(Block::heading(1, "Image"));
+
         if is_svg(input) {
-            writeln!(writer, "# Image")?;
-            writeln!(writer)?;
-            writeln!(writer, "| Property | Value |")?;
-            writeln!(writer, "|----------|-------|")?;
-            writeln!(writer, "| Format | SVG |")?;
-            writeln!(writer, "| Size | {} |", format_size(input.len() as u64))?;
-            return Ok(());
+            doc.push(Block::key_value_table(
+                ["Property", "Value"],
+                &[
+                    ("Format", "SVG".to_string()),
+                    ("Size", format_size(input.len() as u64)),
+                ],
+            ));
+            return doc.write_markdown(writer);
         }
 
         let cursor = Cursor::new(input);
@@ -35,81 +41,83 @@ impl Converter for ImageConverter {
             message: e.to_string(),
         })?;
 
-        writeln!(writer, "# Image")?;
-        writeln!(writer)?;
-        writeln!(writer, "| Property | Value |")?;
-        writeln!(writer, "|----------|-------|")?;
-
+        let mut rows = Vec::new();
         if let Some(fmt) = format {
-            writeln!(writer, "| Format | {fmt:?} |")?;
+            rows.push(("Format", format!("{fmt:?}")));
+        }
+        rows.push(("Size", format_size(input.len() as u64)));
+        rows.push(("Dimensions", format!("{}x{}", img.width(), img.height())));
+        rows.push(("Color Type", format!("{:?}", img.color())));
+        doc.push(Block::key_value_table(["Property", "Value"], &rows));
+
+        if let Some(exif) = exif_blocks(input) {
+            doc.extend(exif);
         }
 
-        writeln!(writer, "| Size | {} |", format_size(input.len() as u64))?;
-        writeln!(
-            writer,
-            "| Dimensions | {}x{} |",
-            img.width(),
-            img.height()
-        )?;
-        writeln!(writer, "| Color Type | {:?} |", img.color())?;
-
-        write_exif(input, writer)?;
-
-        Ok(())
+        doc.write_markdown(writer)
     }
 }
 
-fn write_exif(input: &[u8], writer: &mut dyn Write) -> Result<()> {
-    let exif_reader = exif::Reader::new();
+fn exif_blocks(input: &[u8]) -> Option<Vec<Block>> {
     let mut cursor = Cursor::new(input);
-    let exif_data: exif::Exif = match exif_reader.read_from_container(&mut cursor) {
-        Ok(exif) => exif,
-        Err(_) => return Ok(()),
-    };
+    let exif_data: exif::Exif = exif::Reader::new().read_from_container(&mut cursor).ok()?;
 
     let fields: Vec<(String, String)> = exif_data
         .fields()
         .filter_map(|f| {
-            let tag_name = f.tag.to_string();
             let value = f.display_value().with_unit(&exif_data).to_string();
             if value.is_empty() || value == "unknown" {
                 return None;
             }
-            Some((tag_name, value))
+            Some((f.tag.to_string(), value))
         })
         .collect();
 
     if fields.is_empty() {
-        return Ok(());
+        return None;
     }
-
-    writeln!(writer)?;
-    writeln!(writer, "## EXIF Metadata")?;
-    writeln!(writer)?;
-    writeln!(writer, "| Tag | Value |")?;
-    writeln!(writer, "|-----|-------|")?;
-    for (tag, value) in &fields {
-        writeln!(writer, "| {tag} | {} |", value.replace('|', "\\|"))?;
-    }
-
-    Ok(())
+    Some(vec![
+        Block::heading(2, "EXIF Metadata"),
+        Block::key_value_table(["Tag", "Value"], &fields),
+    ])
 }
 
 fn is_svg(input: &[u8]) -> bool {
-    let header = if input.len() > 256 { &input[..256] } else { input };
+    let header = if input.len() > 256 {
+        &input[..256]
+    } else {
+        input
+    };
     let text = String::from_utf8_lossy(header);
     text.contains("<svg") || text.starts_with("<?xml")
 }
 
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} B")
+    fn convert(input: &[u8]) -> String {
+        let mut out = Vec::new();
+        ImageConverter.convert(input, &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn describes_a_png() {
+        let mut png = Cursor::new(Vec::new());
+        ::image::RgbImage::new(2, 3)
+            .write_to(&mut png, ::image::ImageFormat::Png)
+            .unwrap();
+        let out = convert(&png.into_inner());
+        assert!(out.starts_with("# Image\n\n| Property"), "{out}");
+        assert!(out.contains("| Format     | Png"), "{out}");
+        assert!(out.contains("| Dimensions | 2x3"), "{out}");
+        assert!(out.contains("| Color Type | Rgb8"), "{out}");
+    }
+
+    #[test]
+    fn describes_an_svg_without_decoding_it() {
+        let out = convert(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        assert!(out.contains("| Format   | SVG"), "{out}");
     }
 }

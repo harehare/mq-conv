@@ -82,6 +82,23 @@ impl MediaWriter {
 
 /// Path as written in Markdown: forward slashes, angle-bracketed when it
 /// contains characters that would end the link destination.
+/// A byte count such as `1.5 MB`.
+pub fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 pub fn md_path(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
     if s.contains([' ', '(', ')']) {
@@ -260,6 +277,14 @@ mod tests {
     fn md_path_quotes_paths_with_spaces() {
         assert_eq!(md_path(Path::new("a/b.png")), "a/b.png");
         assert_eq!(md_path(Path::new("my dir/b.png")), "<my dir/b.png>");
+    }
+
+    #[test]
+    fn formats_sizes_with_units() {
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(3 * 1024 * 1024), "3.0 MB");
+        assert_eq!(format_size(5 * 1024 * 1024 * 1024), "5.0 GB");
     }
 
     #[test]

@@ -89,6 +89,28 @@ impl Block {
         Self::Paragraph(vec![Inline::Emphasis(vec![Inline::Text(text.into())])])
     }
 
+    /// A paragraph such as `**Rows**: 3`.
+    pub fn field(label: impl Into<String>, value: impl std::fmt::Display) -> Self {
+        Self::Paragraph(vec![
+            Inline::Strong(vec![Inline::Text(label.into())]),
+            Inline::Text(format!(": {value}")),
+        ])
+    }
+
+    /// A two-column table under `header`, one row per pair.
+    pub fn key_value_table<K, V>(header: [&str; 2], rows: &[(K, V)]) -> Self
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let mut all = vec![vec![header[0].to_string(), header[1].to_string()]];
+        all.extend(
+            rows.iter()
+                .map(|(k, v)| vec![k.as_ref().to_string(), v.as_ref().to_string()]),
+        );
+        Self::text_table(&all)
+    }
+
     /// A table of plain-text cells; the first row is the header.
     pub fn text_table<R, C>(rows: &[R]) -> Self
     where
@@ -402,29 +424,34 @@ fn destination(url: &str) -> String {
 
 /// Escapes what would otherwise change the meaning of the text. `_` is left
 /// alone inside words, where it is not emphasis. `at_start` is whether the
-/// text begins a line, where block markers matter.
+/// text begins a line, where block markers matter. Table cells hold no blocks.
 fn escape(text: &str, in_cell: bool, at_start: bool) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
-    let mut line_start = at_start;
+    let mut line_start = at_start && !in_cell;
     for (i, &c) in chars.iter().enumerate() {
         let word = |j: Option<usize>| {
             j.and_then(|j| chars.get(j))
                 .is_some_and(|c| c.is_alphanumeric())
         };
+        // A marker only counts when a space or the end follows it.
+        let then_space = chars.get(i + 1).is_none_or(|c| c.is_whitespace());
         let escaped = match c {
             '\\' | '`' | '*' | '[' | ']' | '<' => true,
             '|' => !in_cell,
             '_' => !(word(i.checked_sub(1)) && word(Some(i + 1))),
-            '#' | '>' | '-' | '+' => line_start,
-            '.' | ')' => leading_number(&chars, i, at_start),
+            '>' => line_start,
+            '#' | '-' | '+' => {
+                line_start && (then_space || (c != '+' && chars.get(i + 1) == Some(&c)))
+            }
+            '.' | ')' => then_space && leading_number(&chars, i, at_start && !in_cell),
             _ => false,
         };
         if escaped {
             out.push('\\');
         }
         out.push(c);
-        line_start = c == '\n' || (line_start && c == ' ');
+        line_start = c == '\n' && !in_cell || (line_start && c == ' ');
     }
     out
 }
@@ -513,6 +540,27 @@ mod tests {
             markdown(&d),
             "1\\. not a list\n\n\\# not a heading\n\na \\*b\\* \\`c\\` \\[d\\] \\<e> f\\|g\n\nsnake_case and \\_lead\n"
         );
+    }
+
+    #[test]
+    fn markers_without_a_following_space_are_plain_text() {
+        let d = doc(vec![
+            Block::paragraph("2.0 KB"),
+            Block::paragraph("#tag and -x and +1"),
+            Block::paragraph("---"),
+        ]);
+        assert_eq!(markdown(&d), "2.0 KB\n\n#tag and -x and +1\n\n\\---\n");
+    }
+
+    #[test]
+    fn table_cells_do_not_escape_block_markers() {
+        let d = doc(vec![Block::text_table(&[
+            vec!["#", "n"],
+            vec!["1. a", "- b"],
+        ])]);
+        let out = markdown(&d);
+        assert!(out.contains("| # "), "{out}");
+        assert!(out.contains("| 1. a "), "{out}");
     }
 
     #[test]
@@ -617,6 +665,26 @@ mod tests {
             Block::paragraph("two"),
         ])]);
         assert_eq!(markdown(&d), "> one\n>\n> two\n");
+    }
+
+    #[test]
+    fn a_field_is_a_bold_label_and_a_value() {
+        assert_eq!(
+            markdown(&doc(vec![Block::field("Rows", 3)])),
+            "**Rows**: 3\n"
+        );
+    }
+
+    #[test]
+    fn a_key_value_table_has_a_header_row() {
+        let d = doc(vec![Block::key_value_table(
+            ["Tag", "Value"],
+            &[("Title", "a|b")],
+        )]);
+        assert_eq!(
+            markdown(&d),
+            "| Tag   | Value |\n| ----- | ----- |\n| Title | a\\|b  |\n"
+        );
     }
 
     #[test]

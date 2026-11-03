@@ -3,6 +3,7 @@ use std::io::{Cursor, Write};
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 
 use crate::converter::{ConvertOptions, Converter};
+use crate::document::{Block as DocBlock, Document};
 use crate::error::{Error, Result};
 
 pub struct ExcelConverter;
@@ -23,16 +24,15 @@ impl Converter for ExcelConverter {
         options: &ConvertOptions,
     ) -> Result<()> {
         let cursor = Cursor::new(input);
-        let mut workbook =
-            open_workbook_auto_from_rs(cursor).map_err(|e| Error::Conversion {
-                format: "excel",
-                message: e.to_string(),
-            })?;
+        let mut workbook = open_workbook_auto_from_rs(cursor).map_err(|e| Error::Conversion {
+            format: "excel",
+            message: e.to_string(),
+        })?;
 
         let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
         options.check_pages("excel", "sheet", sheet_names.len())?;
 
-        let mut first_written = true;
+        let mut doc = Document::new();
         for (idx, name) in sheet_names.iter().enumerate() {
             // Sheets are numbered by position; unselected ones are never read.
             if !options.is_selected(idx as u32 + 1) {
@@ -45,39 +45,32 @@ impl Converter for ExcelConverter {
                     message: e.to_string(),
                 })?;
 
-            if !std::mem::take(&mut first_written) {
-                writeln!(writer)?;
-            }
-            writeln!(writer, "# {name}")?;
+            doc.push(DocBlock::heading(1, name));
 
             let rows: Vec<Vec<String>> = range
                 .rows()
                 .map(|row| row.iter().map(format_cell).collect())
                 .collect();
 
-            if rows.is_empty() {
-                writeln!(writer)?;
-                writeln!(writer, "*Empty sheet*")?;
-                continue;
-            }
-
             let blocks = split_into_blocks(rows);
             if blocks.is_empty() {
-                writeln!(writer)?;
-                writeln!(writer, "*Empty sheet*")?;
+                doc.push(DocBlock::emphasized("Empty sheet"));
                 continue;
             }
 
             for block in blocks {
-                writeln!(writer)?;
                 match classify_block(block) {
-                    Block::Table(rows) => write_table(writer, &rows)?,
-                    Block::Text(lines) => write_text(writer, &lines)?,
+                    Block::Table(rows) => doc.push(DocBlock::text_table(&rows)),
+                    Block::Text(lines) => {
+                        for line in lines.into_iter().filter(|l| !l.is_empty()) {
+                            doc.push(DocBlock::paragraph(line));
+                        }
+                    }
                 }
             }
         }
 
-        Ok(())
+        doc.write_markdown(writer)
     }
 }
 
@@ -133,56 +126,6 @@ fn classify_block(block: Vec<Vec<String>>) -> Block {
     Block::Text(lines)
 }
 
-fn write_table(writer: &mut dyn Write, rows: &[Vec<String>]) -> Result<()> {
-    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if col_count == 0 {
-        return Ok(());
-    }
-
-    // Header row
-    let header = &rows[0];
-    write!(writer, "|")?;
-    for i in 0..col_count {
-        let cell = header.get(i).map(|s| s.as_str()).unwrap_or("");
-        write!(writer, " {} |", table_cell(cell))?;
-    }
-    writeln!(writer)?;
-
-    // Separator
-    write!(writer, "|")?;
-    for _ in 0..col_count {
-        write!(writer, "---|")?;
-    }
-    writeln!(writer)?;
-
-    // Data rows
-    for row in rows.iter().skip(1) {
-        write!(writer, "|")?;
-        for i in 0..col_count {
-            let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            write!(writer, " {} |", table_cell(cell))?;
-        }
-        writeln!(writer)?;
-    }
-
-    Ok(())
-}
-
-fn write_text(writer: &mut dyn Write, lines: &[String]) -> Result<()> {
-    let mut first = true;
-    for line in lines {
-        if line.is_empty() {
-            continue;
-        }
-        if !first {
-            writeln!(writer)?;
-        }
-        writeln!(writer, "{line}")?;
-        first = false;
-    }
-    Ok(())
-}
-
 fn is_blank_row(row: &[String]) -> bool {
     row.iter().all(|c| c.is_empty())
 }
@@ -190,7 +133,7 @@ fn is_blank_row(row: &[String]) -> bool {
 fn format_cell(data: &Data) -> String {
     match data {
         Data::Empty => String::new(),
-        Data::String(s) => escape_pipe(s),
+        Data::String(s) => s.clone(),
         Data::Int(n) => n.to_string(),
         Data::Float(f) => {
             if *f == f.trunc() {
@@ -210,18 +153,10 @@ fn format_cell(data: &Data) -> String {
                 format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02}")
             }
         }
-        Data::DateTimeIso(s) => escape_pipe(s),
-        Data::DurationIso(s) => escape_pipe(s),
+        Data::DateTimeIso(s) => s.clone(),
+        Data::DurationIso(s) => s.clone(),
         Data::Error(e) => format!("#{e:?}"),
     }
-}
-
-fn escape_pipe(s: &str) -> String {
-    s.replace('|', "\\|")
-}
-
-fn table_cell(s: &str) -> String {
-    s.replace("\r\n", "<br>").replace('\n', "<br>")
 }
 
 #[cfg(test)]
@@ -312,11 +247,7 @@ mod tests {
     #[test]
     fn test_classify_sparse_rows_is_text() {
         // Only 1 out of 3 rows has 2+ cells — does not reach majority threshold
-        let block = vec![
-            s(&["Label", "Value"]),
-            s(&["Note"]),
-            s(&["Footer"]),
-        ];
+        let block = vec![s(&["Label", "Value"]), s(&["Note"]), s(&["Footer"])];
         assert!(matches!(classify_block(block), Block::Text(_)));
     }
 
@@ -429,7 +360,10 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, (name, _))| {
-                    format!(r#"<sheet name="{name}" sheetId="{0}" r:id="rId{0}"/>"#, i + 1)
+                    format!(
+                        r#"<sheet name="{name}" sheetId="{0}" r:id="rId{0}"/>"#,
+                        i + 1
+                    )
                 })
                 .collect();
             let workbook = format!(
@@ -492,11 +426,20 @@ mod tests {
 
             let out = convert_pages(&xlsx, "2").unwrap();
             assert!(out.starts_with("# Beta\n"), "{out}");
-            assert!(out.contains("b-text") && !out.contains("a-text") && !out.contains("c-text"), "{out}");
+            assert!(
+                out.contains("b-text") && !out.contains("a-text") && !out.contains("c-text"),
+                "{out}"
+            );
 
             let out = convert_pages(&xlsx, "1,3").unwrap();
-            assert!(out.contains("# Alpha") && out.contains("# Gamma") && !out.contains("Beta"), "{out}");
-            assert!(out.contains("a-text\n\n# Gamma"), "sheets not separated:\n{out}");
+            assert!(
+                out.contains("# Alpha") && out.contains("# Gamma") && !out.contains("Beta"),
+                "{out}"
+            );
+            assert!(
+                out.contains("a-text\n\n# Gamma"),
+                "sheets not separated:\n{out}"
+            );
 
             // Without a selection every sheet is converted, as before.
             let all = ExcelConverter.convert(&xlsx, &mut Vec::new());
@@ -608,10 +551,13 @@ mod tests {
             );
             let out = convert(&xlsx);
             assert!(out.contains("# Sales"), "sheet heading missing");
-            assert!(out.contains("| Name | Age | City |"), "header row missing");
-            assert!(out.contains("|---|---|---|"), "separator missing");
-            assert!(out.contains("| Alice | 30 | Tokyo |"), "data row missing");
-            assert!(out.contains("| Bob | 25 | Osaka |"), "data row missing");
+            assert!(
+                out.contains("| Name  | Age | City  |"),
+                "header row missing"
+            );
+            assert!(out.contains("| ----- | --- | ----- |"), "separator missing");
+            assert!(out.contains("| Alice | 30  | Tokyo |"), "data row missing");
+            assert!(out.contains("| Bob   | 25  | Osaka |"), "data row missing");
         }
 
         #[test]
@@ -623,7 +569,7 @@ mod tests {
             let out = convert(&xlsx);
             assert!(out.contains("First note"), "text line missing");
             assert!(out.contains("Second note"), "text line missing");
-            assert!(!out.contains("|---|"), "should not be a table");
+            assert!(!out.contains('|'), "should not be a table");
         }
 
         #[test]
@@ -640,10 +586,13 @@ mod tests {
             );
             let out = convert(&xlsx);
             assert!(out.contains("Monthly Report"), "title missing");
-            assert!(out.contains("| Name | Score |"), "table header missing");
-            assert!(out.contains("| Alice | 95 |"), "table row missing");
+            assert!(out.contains("| Name  | Score |"), "table header missing");
+            assert!(out.contains("| Alice | 95    |"), "table row missing");
             // title should NOT appear as a table row
-            assert!(!out.contains("| Monthly Report |"), "title rendered as table row");
+            assert!(
+                !out.contains("| Monthly Report |"),
+                "title rendered as table row"
+            );
         }
 
         #[test]
@@ -658,9 +607,12 @@ mod tests {
                 ],
             );
             let out = convert(&xlsx);
-            assert!(out.contains("| Item | Qty |"), "table missing");
+            assert!(out.contains("| Item  | Qty |"), "table missing");
             assert!(out.contains("Note: draft only"), "note missing");
-            assert!(!out.contains("| Note: draft only |"), "note rendered as table row");
+            assert!(
+                !out.contains("| Note: draft only |"),
+                "note rendered as table row"
+            );
         }
 
         #[test]

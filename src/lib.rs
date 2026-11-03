@@ -1,6 +1,7 @@
 pub mod budget;
 pub mod converter;
 pub mod detect;
+pub mod document;
 pub mod error;
 pub mod formats;
 pub mod parallel;

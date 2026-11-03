@@ -1,6 +1,3 @@
-#[cfg(any(feature = "json", feature = "toml_conv", feature = "yaml"))]
-pub mod structured;
-
 #[cfg(feature = "asciidoc")]
 pub mod asciidoc;
 #[cfg(feature = "audio")]
@@ -11,8 +8,6 @@ pub mod epub;
 pub mod excel;
 #[cfg(feature = "image")]
 pub mod image;
-#[cfg(feature = "json")]
-pub mod json;
 pub mod media;
 #[cfg(feature = "markdown_docx")]
 pub mod markdown_docx;
@@ -48,16 +43,10 @@ pub mod rst;
 pub mod sqlite;
 #[cfg(feature = "tar")]
 pub mod tar;
-#[cfg(feature = "toml_conv")]
-pub mod toml_conv;
 #[cfg(feature = "video")]
 pub mod video;
 #[cfg(feature = "word")]
 pub mod word;
-#[cfg(feature = "xml")]
-pub mod xml;
-#[cfg(feature = "yaml")]
-pub mod yaml;
 #[cfg(feature = "zip")]
 pub mod zip;
 
@@ -105,26 +94,6 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::Audio => Ok(Box::new(audio::AudioConverter)),
         #[cfg(not(feature = "audio"))]
         Format::Audio => Err(crate::error::Error::FeatureDisabled("audio".into())),
-
-        #[cfg(feature = "json")]
-        Format::Json => Ok(Box::new(json::JsonConverter)),
-        #[cfg(not(feature = "json"))]
-        Format::Json => Err(crate::error::Error::FeatureDisabled("json".into())),
-
-        #[cfg(feature = "yaml")]
-        Format::Yaml => Ok(Box::new(yaml::YamlConverter)),
-        #[cfg(not(feature = "yaml"))]
-        Format::Yaml => Err(crate::error::Error::FeatureDisabled("yaml".into())),
-
-        #[cfg(feature = "toml_conv")]
-        Format::Toml => Ok(Box::new(toml_conv::TomlConverter)),
-        #[cfg(not(feature = "toml_conv"))]
-        Format::Toml => Err(crate::error::Error::FeatureDisabled("toml".into())),
-
-        #[cfg(feature = "xml")]
-        Format::Xml => Ok(Box::new(xml::XmlConverter)),
-        #[cfg(not(feature = "xml"))]
-        Format::Xml => Err(crate::error::Error::FeatureDisabled("xml".into())),
 
         #[cfg(feature = "sqlite")]
         Format::Sqlite => Ok(Box::new(sqlite::SqliteConverter)),

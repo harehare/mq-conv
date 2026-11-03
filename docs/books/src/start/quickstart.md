@@ -2,8 +2,8 @@
 
 ```sh
 mq-conv input.pdf                  # convert a file to stdout
-mq-conv input.bin --format json    # force a format
-cat input.json | mq-conv --format json   # read stdin
+mq-conv input.bin --format rst     # force a format
+cat notes.org | mq-conv --format org     # read stdin
 ```
 
 Convert many files into a directory of `.md` files:

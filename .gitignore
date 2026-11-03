@@ -3,3 +3,11 @@ settings.local.json
 out
 .DS_Store
 /pkg
+
+# Copied from assets/ by the docs workflow; created locally for previewing docs/index.html
+docs/assets
+# Copied from bin/install.sh by the docs workflow
+docs/install.sh
+# mdbook output
+docs/book
+docs/books/book

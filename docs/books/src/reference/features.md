@@ -10,7 +10,7 @@ Features come in groups. The default build enables `documents`, `markup`, `write
 
 | Feature | Enables |
 | --- | --- |
-| `documents` | `excel`, `pdf`, `powerpoint`, `word`, `epub`, `zip` |
+| `documents` | `excel`, `pdf`, `powerpoint`, `word`, `epub`, `mobi`, `zip` |
 | `markup` | `rst`, `org`, `mediawiki`, `asciidoc` |
 | `media` | `image`, `audio`, `video`, `tar` |
 | `writers` | every `markdown_*` output target for `--to` |

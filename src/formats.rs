@@ -29,6 +29,8 @@ pub mod markdown_text;
 pub mod media;
 #[cfg(feature = "mediawiki")]
 pub mod mediawiki;
+#[cfg(feature = "mobi")]
+pub mod mobi;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 #[cfg(feature = "org")]
@@ -89,6 +91,11 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::Epub => Ok(Box::new(epub::EpubConverter)),
         #[cfg(not(feature = "epub"))]
         Format::Epub => Err(crate::error::Error::FeatureDisabled("epub".into())),
+
+        #[cfg(feature = "mobi")]
+        Format::Mobi => Ok(Box::new(mobi::MobiConverter)),
+        #[cfg(not(feature = "mobi"))]
+        Format::Mobi => Err(crate::error::Error::FeatureDisabled("mobi".into())),
 
         #[cfg(feature = "audio")]
         Format::Audio => Ok(Box::new(audio::AudioConverter)),

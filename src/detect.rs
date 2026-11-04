@@ -9,6 +9,7 @@ pub enum Format {
     Image,
     Zip,
     Epub,
+    Mobi,
     Audio,
     Sqlite,
     Tar,
@@ -55,6 +56,7 @@ impl Format {
             }
             "zip" => Some(Self::Zip),
             "epub" => Some(Self::Epub),
+            "mobi" | "azw" | "azw3" | "prc" => Some(Self::Mobi),
             "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" => Some(Self::Audio),
             "sqlite" | "sqlite3" | "db" => Some(Self::Sqlite),
             "tar" => Some(Self::Tar),
@@ -77,6 +79,11 @@ impl Format {
         // PDF: %PDF
         if bytes.starts_with(b"%PDF") {
             return Some(Self::Pdf);
+        }
+
+        // MOBI / AZW: PalmDB header with the "BOOKMOBI" type and creator at offset 60
+        if bytes.len() >= 68 && &bytes[60..68] == b"BOOKMOBI" {
+            return Some(Self::Mobi);
         }
 
         // PNG: \x89PNG
@@ -211,6 +218,7 @@ impl Format {
             "image" => Some(Self::Image),
             "zip" => Some(Self::Zip),
             "epub" => Some(Self::Epub),
+            "mobi" => Some(Self::Mobi),
             "audio" => Some(Self::Audio),
             "sqlite" => Some(Self::Sqlite),
             "tar" => Some(Self::Tar),
@@ -244,6 +252,7 @@ impl std::fmt::Display for Format {
             Self::Image => write!(f, "image"),
             Self::Zip => write!(f, "zip"),
             Self::Epub => write!(f, "epub"),
+            Self::Mobi => write!(f, "mobi"),
             Self::Audio => write!(f, "audio"),
             Self::Sqlite => write!(f, "sqlite"),
             Self::Tar => write!(f, "tar"),
@@ -263,5 +272,20 @@ impl std::fmt::Display for Format {
             Self::MediaWiki => write!(f, "mediawiki"),
             Self::Asciidoc => write!(f, "asciidoc"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_mobi() {
+        for name in ["a.mobi", "a.AZW3", "a.azw", "a.prc"] {
+            assert_eq!(Format::detect(Some(name), b""), Some(Format::Mobi));
+        }
+        let mut bytes = vec![0u8; 80];
+        bytes[60..68].copy_from_slice(b"BOOKMOBI");
+        assert_eq!(Format::detect(None, &bytes), Some(Format::Mobi));
     }
 }

@@ -8,6 +8,7 @@ The format is detected by extension and magic bytes. Override it with `--format`
 | | Word | `.docx` | Headings, styles, lists, tables, hyperlinks |
 | | PowerPoint | `.pptx` | Slides, titles, bullets, tables, speaker notes |
 | | EPUB | `.epub` | Chapter structure preserved |
+| | MOBI | `.mobi`, `.azw`, `.azw3`, `.prc` | Chapters, metadata, images. DRM-protected books are rejected |
 | Markup | reStructuredText | `.rst` | |
 | | Org-mode | `.org` | |
 | | MediaWiki | `.wiki`, `.mediawiki` | |
@@ -19,7 +20,7 @@ The format is detected by extension and magic bytes. Override it with `--format`
 | | Video | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.m4v`, `.wmv`, `.flv` | |
 | Archives | ZIP, TAR | `.zip`, `.tar`, `.tgz` | |
 
-`--format` values: `excel`, `pdf`, `powerpoint`, `word`, `image`, `zip`, `epub`, `audio`, `sqlite`, `tar`, `video`, `ocr`, `markdown-docx`, `rst`, `org`, `mediawiki`, `asciidoc`.
+`--format` values: `excel`, `pdf`, `powerpoint`, `word`, `image`, `zip`, `epub`, `mobi`, `audio`, `sqlite`, `tar`, `video`, `ocr`, `markdown-docx`, `rst`, `org`, `mediawiki`, `asciidoc`.
 
 ## CSV, HTML, JSON, YAML, TOML and XML
 

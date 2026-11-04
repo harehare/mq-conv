@@ -12,8 +12,8 @@ Options:
       --to <TO>                  Write this format instead of Markdown (any input is converted through Markdown)
       --ocr-lang <OCR_LANG>      Tesseract language for OCR, e.g. "jpn" or "eng+jpn" [default: eng]
   -q, --query <QUERY>            Run an mq query over the converted Markdown and print its result
-      --pages <PAGES>            Convert only these PDF pages, slides, sheets or EPUB chapters, e.g. "3", "2-5", "7-" or "1,4-6"
-      --extract-images <DIR>     Extract embedded images (PDF, DOCX, PPTX, EPUB) into DIR and link them
+      --pages <PAGES>            Convert only these PDF pages, slides, sheets or EPUB/MOBI chapters, e.g. "3", "2-5", "7-" or "1,4-6"
+      --extract-images <DIR>     Extract embedded images (PDF, DOCX, PPTX, EPUB, MOBI) into DIR and link them
       --max-tokens <N>           Emit at most ~N tokens, cut at block boundaries (single input)
       --cursor <OFFSET>          Resume from the cursor printed by a previous --max-tokens run [default: 0]
   -h, --help                     Print help

@@ -37,6 +37,7 @@ markdown_org = []
 markdown_rst = []
 markdown_text = []
 mediawiki = []
+mobi = ["dep:mobi"]
 ocr = ["dep:leptess"]
 org = []
 pdf = ["dep:lopdf", "dep:encoding_rs", "dep:flate2"]
@@ -50,7 +51,7 @@ word = ["dep:zip", "dep:quick-xml"]
 zip = ["dep:zip"]
 
 # Feature groups.
-documents = ["excel", "pdf", "powerpoint", "word", "epub", "zip"]
+documents = ["excel", "pdf", "powerpoint", "word", "epub", "mobi", "zip"]
 markup = ["rst", "org", "mediawiki", "asciidoc"]
 media = ["image", "audio", "video", "tar"]
 writers = [
@@ -84,6 +85,7 @@ kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.25", optional = true}
 lopdf = {version = "0.46", optional = true, default-features = false}
+mobi = {version = "0.8", optional = true}
 mq-lang = {version = "0.10.0", optional = true}
 mq-markdown = {version = "0.10.0", features = ["html-to-markdown", "json"]}
 quick-xml = {version = "0.42", optional = true}

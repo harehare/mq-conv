@@ -38,7 +38,7 @@ struct Args {
     query: Option<String>,
 
     /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets,
-    /// EPUB chapters), e.g. "3", "2-5", "7-" or "1,4-6". Numbers in the output stay those of
+    /// EPUB/MOBI chapters), e.g. "3", "2-5", "7-" or "1,4-6". Numbers in the output stay those of
     /// the source document.
     #[arg(long, value_name = "PAGES")]
     pages: Option<PageRanges>,
@@ -48,7 +48,7 @@ struct Args {
     #[arg(long, default_value = "eng")]
     ocr_lang: String,
 
-    /// Extract embedded images (PDF, DOCX, PPTX, EPUB) into this directory and
+    /// Extract embedded images (PDF, DOCX, PPTX, EPUB, MOBI) into this directory and
     /// reference them from the Markdown. With several inputs each file gets
     /// its own sub-directory.
     #[arg(long, value_name = "DIR")]
@@ -75,6 +75,7 @@ enum FormatArg {
     Image,
     Zip,
     Epub,
+    Mobi,
     Audio,
     Sqlite,
     Tar,
@@ -126,6 +127,7 @@ impl From<FormatArg> for Format {
             FormatArg::Image => Format::Image,
             FormatArg::Zip => Format::Zip,
             FormatArg::Epub => Format::Epub,
+            FormatArg::Mobi => Format::Mobi,
             FormatArg::Audio => Format::Audio,
             FormatArg::Sqlite => Format::Sqlite,
             FormatArg::Tar => Format::Tar,
@@ -177,11 +179,11 @@ fn convert_bytes(
     if args.pages.is_some()
         && !matches!(
             detected,
-            Format::Pdf | Format::PowerPoint | Format::Excel | Format::Epub
+            Format::Pdf | Format::PowerPoint | Format::Excel | Format::Epub | Format::Mobi
         )
     {
         return Err(miette::miette!(
-            "--pages is only valid for PDF, PowerPoint, Excel and EPUB input"
+            "--pages is only valid for PDF, PowerPoint, Excel, EPUB and MOBI input"
         ));
     }
     let options = ConvertOptions {

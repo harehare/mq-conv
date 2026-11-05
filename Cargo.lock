@@ -322,7 +322,7 @@ dependencies = [
  "log",
  "quick-xml 0.42.0",
  "serde",
- "zip 9.2.1",
+ "zip 9.2.2",
 ]
 
 [[package]]
@@ -1744,7 +1744,7 @@ dependencies = [
  "thiserror 2.0.21",
  "uuid",
  "wasm-bindgen",
- "zip 9.2.1",
+ "zip 9.2.2",
 ]
 
 [[package]]
@@ -3599,14 +3599,15 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.2.1"
+version = "9.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848dad21639597378c3be94c59fd4de683f0f6d8a5387575896e1245737d4f37"
+checksum = "e408c6cc4699dd017d53dc080cd51c2cea2b5354af57a1479bd265ed42911487"
 dependencies = [
  "crc32fast",
  "flate2",
  "getrandom",
  "indexmap 2.14.0",
+ "libc",
  "memchr",
  "nix",
  "typed-path 0.13.0",

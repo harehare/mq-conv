@@ -3,13 +3,28 @@ use super::*;
 /// Build a minimal, valid single-content-stream-per-page PDF using only the
 /// built-in Helvetica font (no /Widths: exercises the metric fallback).
 fn make_pdf(pages: &[&str], media_box: &str, info: Option<&str>) -> Vec<u8> {
+    build_pdf(pages, media_box, info, "", &[])
+}
+
+/// [`make_pdf`] with extra entries in the catalog dictionary and extra objects.
+fn build_pdf(
+    pages: &[&str],
+    media_box: &str,
+    info: Option<&str>,
+    catalog_extra: &str,
+    extra_objs: &[(usize, String)],
+) -> Vec<u8> {
     let n_pages = pages.len();
     let font_obj_num = 3 + n_pages * 2;
     let info_obj_num = font_obj_num + 1;
     let kids: Vec<String> = (0..n_pages).map(|i| format!("{} 0 R", 3 + i * 2)).collect();
 
     let mut objs: Vec<(usize, String)> = Vec::new();
-    objs.push((1, "<< /Type /Catalog /Pages 2 0 R >>".to_string()));
+    objs.push((
+        1,
+        format!("<< /Type /Catalog /Pages 2 0 R {catalog_extra} >>"),
+    ));
+    objs.extend(extra_objs.iter().cloned());
     objs.push((
         2,
         format!(
@@ -506,4 +521,52 @@ fn test_pages_option_outside_the_document_is_an_error() {
     let pdf = three_pages();
     let err = convert_pages(&pdf, "9-").unwrap_err().to_string();
     assert!(err.contains("no page matches"), "{err}");
+}
+
+#[test]
+fn test_outline_sets_heading_levels() {
+    // Same font size everywhere, so layout analysis finds no headings itself.
+    let page1 = format!(
+        "{}{}",
+        text("F1", 10, 20, 260, "Alpha"),
+        text("F1", 10, 20, 220, "Some body text.")
+    );
+    let page2 = format!(
+        "{}{}",
+        text("F1", 10, 20, 260, "Beta"),
+        text("F1", 10, 20, 220, "More body text.")
+    );
+    let outline = [
+        (20, "<< /Type /Outlines /First 21 0 R /Last 21 0 R /Count 2 >>".to_string()),
+        (
+            21,
+            "<< /Title (Alpha) /Parent 20 0 R /First 22 0 R /Last 22 0 R /Count 1 /Dest [3 0 R /Fit] >>"
+                .to_string(),
+        ),
+        (
+            22,
+            "<< /Title (Beta) /Parent 21 0 R /Dest [5 0 R /Fit] >>".to_string(),
+        ),
+    ];
+    let pdf = build_pdf(
+        &[&page1, &page2],
+        "[0 0 300 300]",
+        None,
+        "/Outlines 20 0 R",
+        &outline,
+    );
+    let out = convert(&pdf);
+    assert!(
+        out.contains("# Alpha\n"),
+        "missing level 1 heading in:\n{out}"
+    );
+    assert!(
+        out.contains("## Beta\n"),
+        "missing level 2 heading in:\n{out}"
+    );
+    assert!(out.contains("Some body text."), "{out}");
+    assert!(
+        !out.contains("# Some body"),
+        "body became a heading:\n{out}"
+    );
 }

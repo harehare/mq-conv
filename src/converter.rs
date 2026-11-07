@@ -19,6 +19,8 @@ pub struct ConvertOptions {
     /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets, EPUB chapters).
     /// Numbers in the output stay those of the source document.
     pub pages: Option<PageRanges>,
+    /// List the formulas of spreadsheet cells besides their values.
+    pub formulas: bool,
 }
 
 impl ConvertOptions {

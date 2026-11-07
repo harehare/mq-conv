@@ -2,7 +2,7 @@
 
 ## Embedded images
 
-`--extract-images DIR` writes images from PDF, Word, PowerPoint, EPUB and MOBI into `DIR` and links them from the Markdown. With several inputs each file gets its own sub-directory.
+`--extract-images DIR` writes images from PDF, Word, PowerPoint, OpenDocument, Jupyter notebooks, EPUB and MOBI into `DIR` and links them from the Markdown. With several inputs each file gets its own sub-directory.
 
 ## OCR
 

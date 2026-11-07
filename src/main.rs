@@ -37,7 +37,7 @@ struct Args {
     #[arg(short = 'q', long, value_name = "QUERY")]
     query: Option<String>,
 
-    /// Convert only these pages (PDF pages, PowerPoint slides, Excel sheets,
+    /// Convert only these pages (PDF pages, PowerPoint/ODP slides, Excel sheets,
     /// EPUB/MOBI chapters), e.g. "3", "2-5", "7-" or "1,4-6". Numbers in the output stay those of
     /// the source document.
     #[arg(long, value_name = "PAGES")]
@@ -48,7 +48,12 @@ struct Args {
     #[arg(long, default_value = "eng")]
     ocr_lang: String,
 
-    /// Extract embedded images (PDF, DOCX, PPTX, EPUB, MOBI) into this directory and
+    /// List spreadsheet formulas (Excel, ODS) after each sheet, besides the
+    /// values the cells show.
+    #[arg(long)]
+    formulas: bool,
+
+    /// Extract embedded images (PDF, DOCX, PPTX, ODT, ODP, IPYNB, EPUB, MOBI) into this directory and
     /// reference them from the Markdown. With several inputs each file gets
     /// its own sub-directory.
     #[arg(long, value_name = "DIR")]
@@ -73,6 +78,10 @@ enum FormatArg {
     Powerpoint,
     Word,
     Image,
+    Ipynb,
+    Eml,
+    Odt,
+    Odp,
     Zip,
     Epub,
     Mobi,
@@ -125,6 +134,10 @@ impl From<FormatArg> for Format {
             FormatArg::Powerpoint => Format::PowerPoint,
             FormatArg::Word => Format::Word,
             FormatArg::Image => Format::Image,
+            FormatArg::Ipynb => Format::Ipynb,
+            FormatArg::Eml => Format::Eml,
+            FormatArg::Odt => Format::Odt,
+            FormatArg::Odp => Format::Odp,
             FormatArg::Zip => Format::Zip,
             FormatArg::Epub => Format::Epub,
             FormatArg::Mobi => Format::Mobi,
@@ -179,11 +192,16 @@ fn convert_bytes(
     if args.pages.is_some()
         && !matches!(
             detected,
-            Format::Pdf | Format::PowerPoint | Format::Excel | Format::Epub | Format::Mobi
+            Format::Pdf
+                | Format::PowerPoint
+                | Format::Odp
+                | Format::Excel
+                | Format::Epub
+                | Format::Mobi
         )
     {
         return Err(miette::miette!(
-            "--pages is only valid for PDF, PowerPoint, Excel, EPUB and MOBI input"
+            "--pages is only valid for PDF, PowerPoint, ODP, Excel, EPUB and MOBI input"
         ));
     }
     let options = ConvertOptions {
@@ -191,6 +209,7 @@ fn convert_bytes(
         image_link_dir,
         ocr_lang: Some(args.ocr_lang.clone()),
         pages: args.pages.clone(),
+        formulas: args.formulas,
     };
     let convert = |format: Format, input: &[u8]| -> miette::Result<(Vec<u8>, Box<dyn Converter>)> {
         let converter =

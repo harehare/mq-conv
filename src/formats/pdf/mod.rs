@@ -10,6 +10,7 @@ mod font;
 mod glyphnames;
 mod image;
 mod layout;
+mod outline;
 mod table;
 mod util;
 mod words;
@@ -138,10 +139,20 @@ impl Converter for PdfConverter {
         if let Some(dir) = image_dir {
             std::fs::create_dir_all(dir)?;
         }
-        let rendered: Vec<Option<Vec<MdBlock>>> = par_map(&prepared, |p| match p {
+        let mut rendered: Vec<Option<Vec<MdBlock>>> = par_map(&prepared, |p| match p {
             Some(p) if selected(p.number) => render_page(&doc, p, &stats, options),
             _ => Vec::new(),
         });
+
+        // Bookmarks tell the headings and their depth better than font sizes do.
+        let bookmarks = outline::read(&doc);
+        if !bookmarks.is_empty() {
+            for ((number, _), blocks) in pages.iter().zip(rendered.iter_mut()) {
+                if let Some(blocks) = blocks {
+                    outline::apply(blocks, &bookmarks, *number);
+                }
+            }
+        }
 
         let mut pages_doc = MdDocument::new();
         for (i, (page, blocks)) in pages.iter().zip(rendered).enumerate() {

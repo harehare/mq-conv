@@ -1,9 +1,9 @@
 use std::io::{Cursor, Write};
 
-use calamine::{Data, Reader, open_workbook_auto_from_rs};
+use calamine::{Data, Range, Reader, SheetVisible, open_workbook_auto_from_rs};
 
 use crate::converter::{ConvertOptions, Converter};
-use crate::document::{Block as DocBlock, Document};
+use crate::document::{Block as DocBlock, Document, Inline};
 use crate::error::{Error, Result};
 
 pub struct ExcelConverter;
@@ -46,6 +46,13 @@ impl Converter for ExcelConverter {
                 })?;
 
             doc.push(DocBlock::heading(1, name));
+            match workbook.sheets_metadata().get(idx).map(|s| s.visible) {
+                Some(SheetVisible::Hidden) => doc.push(DocBlock::emphasized("Hidden sheet")),
+                Some(SheetVisible::VeryHidden) => {
+                    doc.push(DocBlock::emphasized("Very hidden sheet"));
+                }
+                _ => {}
+            }
 
             let rows: Vec<Vec<String>> = range
                 .rows()
@@ -57,6 +64,11 @@ impl Converter for ExcelConverter {
                 doc.push(DocBlock::emphasized("Empty sheet"));
                 continue;
             }
+            let formulas = if options.formulas {
+                workbook.worksheet_formula(name).ok()
+            } else {
+                None
+            };
 
             for block in blocks {
                 match classify_block(block) {
@@ -68,10 +80,54 @@ impl Converter for ExcelConverter {
                     }
                 }
             }
+            if let Some(table) = formulas.and_then(|f| formula_table(&f, &range)) {
+                doc.push(DocBlock::Paragraph(vec![Inline::Strong(vec![
+                    Inline::Text("Formulas".to_string()),
+                ])]));
+                doc.push(table);
+            }
         }
 
         doc.write_markdown(writer)
     }
+}
+
+/// The cells that hold a formula as a `Cell | Formula | Value` table.
+fn formula_table(formulas: &Range<String>, values: &Range<Data>) -> Option<DocBlock> {
+    let (row0, col0) = formulas.start()?;
+    let mut rows = vec![
+        ["Cell", "Formula", "Value"]
+            .map(|h| vec![Inline::Text(h.to_string())])
+            .to_vec(),
+    ];
+    for (row, col, formula) in formulas.cells() {
+        if formula.is_empty() {
+            continue;
+        }
+        let at = (row0 + row as u32, col0 + col as u32);
+        let value = values.get_value(at).map(format_cell).unwrap_or_default();
+        rows.push(vec![
+            vec![Inline::Text(cell_address(at))],
+            vec![Inline::Code(format!(
+                "={}",
+                formula.trim_start_matches('=')
+            ))],
+            vec![Inline::Text(value)],
+        ]);
+    }
+    (rows.len() > 1).then_some(DocBlock::Table(rows))
+}
+
+/// `(0, 0)` is `A1`, `(2, 27)` is `AB3`.
+fn cell_address((row, col): (u32, u32)) -> String {
+    let mut letters = Vec::new();
+    let mut n = col + 1;
+    while n > 0 {
+        letters.push(b'A' + ((n - 1) % 26) as u8);
+        n = (n - 1) / 26;
+    }
+    letters.reverse();
+    format!("{}{}", String::from_utf8_lossy(&letters), row + 1)
 }
 
 enum Block {
@@ -166,6 +222,14 @@ mod tests {
     use rstest::rstest;
 
     // ── unit tests ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cell_address() {
+        assert_eq!(cell_address((0, 0)), "A1");
+        assert_eq!(cell_address((2, 25)), "Z3");
+        assert_eq!(cell_address((2, 26)), "AA3");
+        assert_eq!(cell_address((0, 27)), "AB1");
+    }
 
     #[rstest]
     #[case(vec![], true)]
@@ -634,6 +698,59 @@ mod tests {
             let xlsx = make_xlsx("MySheet", &[&["a", "b"], &["1", "2"]]);
             let out = convert(&xlsx);
             assert!(out.starts_with("# MySheet\n"), "sheet heading wrong");
+        }
+
+        /// A one-sheet workbook with the given `<sheet>` attributes and sheet XML.
+        fn make_xlsx_raw(sheet_attrs: &str, sheet_xml: &str) -> Vec<u8> {
+            let parts = [
+                ("[Content_Types].xml", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#.to_string()),
+                ("_rels/.rels", r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_string()),
+                ("xl/workbook.xml", format!(r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" {sheet_attrs} r:id="rId1"/></sheets></workbook>"#)),
+                ("xl/_rels/workbook.xml.rels", r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#.to_string()),
+                ("xl/worksheets/sheet1.xml", format!(r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{sheet_xml}</sheetData></worksheet>"#)),
+            ];
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, content) in parts {
+                zip.start_file(name, opts).unwrap();
+                zip.write_all(content.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap().into_inner()
+        }
+
+        const FORMULA_ROWS: &str = r#"<row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c></row><row r="2"><c r="A2"><v>3</v></c><c r="B2"><f>A1+A2</f><v>4</v></c></row>"#;
+
+        #[test]
+        fn formulas_are_listed_only_on_request() {
+            let xlsx = make_xlsx_raw("", FORMULA_ROWS);
+            let mut plain = Vec::new();
+            ExcelConverter.convert(&xlsx, &mut plain).unwrap();
+            assert!(!String::from_utf8(plain).unwrap().contains("Formulas"));
+
+            let options = ConvertOptions {
+                formulas: true,
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            ExcelConverter
+                .convert_with(&xlsx, &mut out, &options)
+                .unwrap();
+            let md = String::from_utf8(out).unwrap();
+            assert!(md.contains("**Formulas**"), "{md}");
+            assert!(md.contains("| B2 "), "{md}");
+            assert!(md.contains("`=A1+A2`"), "{md}");
+            assert!(md.contains("| 4 "), "{md}");
+        }
+
+        #[test]
+        fn hidden_sheets_are_marked() {
+            let xlsx = make_xlsx_raw(r#"state="hidden""#, FORMULA_ROWS);
+            let mut out = Vec::new();
+            ExcelConverter.convert(&xlsx, &mut out).unwrap();
+            let md = String::from_utf8(out).unwrap();
+            assert!(md.starts_with("# Data\n\n*Hidden sheet*\n"), "{md}");
         }
     }
 }

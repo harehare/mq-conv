@@ -194,7 +194,13 @@ pub fn parse_relationships(xml: &str) -> HashMap<String, String> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         "Id" => id = Some(attr.value.to_string()),
-                        "Target" => target = Some(attr.value.to_string()),
+                        // `&amp;` in a link's query string must come out as `&`.
+                        "Target" => {
+                            target = Some(
+                                attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                    .map_or_else(|_| attr.value.to_string(), |v| v.into_owned()),
+                            );
+                        }
                         _ => {}
                     }
                 }

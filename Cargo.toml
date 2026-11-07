@@ -24,9 +24,11 @@ path = "src/lib.rs"
 asciidoc = []
 audio = ["dep:lofty"]
 default = ["documents", "markup", "writers", "media", "sqlite", "query"]
+eml = ["dep:mail-parser"]
 epub = ["dep:zip", "dep:quick-xml"]
 excel = ["dep:calamine"]
 image = ["dep:image", "dep:kamadak-exif"]
+ipynb = ["dep:serde_json"]
 markdown_asciidoc = []
 markdown_docx = ["dep:docx-rs"]
 markdown_epub_out = ["dep:epub-builder"]
@@ -39,6 +41,7 @@ markdown_text = []
 mediawiki = []
 mobi = ["dep:mobi"]
 ocr = ["dep:leptess"]
+opendocument = ["dep:zip", "dep:quick-xml"]
 org = []
 pdf = ["dep:lopdf", "dep:encoding_rs", "dep:flate2"]
 powerpoint = ["dep:zip", "dep:quick-xml"]
@@ -51,7 +54,7 @@ word = ["dep:zip", "dep:quick-xml"]
 zip = ["dep:zip"]
 
 # Feature groups.
-documents = ["excel", "pdf", "powerpoint", "word", "epub", "mobi", "zip"]
+documents = ["excel", "pdf", "powerpoint", "word", "epub", "mobi", "zip", "ipynb", "eml", "opendocument"]
 markup = ["rst", "org", "mediawiki", "asciidoc"]
 media = ["image", "audio", "video", "tar"]
 writers = [
@@ -85,6 +88,7 @@ kamadak-exif = {version = "0.6", optional = true}
 leptess = {version = "0.14", optional = true}
 lofty = {version = "0.25", optional = true}
 lopdf = {version = "0.46", optional = true, default-features = false}
+mail-parser = {version = "1.0.1", optional = true, features = ["full_encoding"]}
 mobi = {version = "0.8", optional = true}
 mq-lang = {version = "0.10.0", optional = true}
 mq-markdown = {version = "0.10.0", features = ["html-to-markdown", "json"]}

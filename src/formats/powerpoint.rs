@@ -6,7 +6,10 @@ use quick_xml::events::Event;
 use crate::converter::{ConvertOptions, Converter};
 use crate::document::{Block, Builder, Document, Inline, trim_inlines};
 use crate::error::{Error, Result};
-use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
+use crate::formats::media::{
+    MediaWriter, extract_related_images, parse_relationships, resolve_archive_path,
+};
+use crate::formats::xmlutil::entity_text;
 
 pub struct PowerPointConverter;
 
@@ -135,7 +138,7 @@ impl Converter for PowerPointConverter {
             }
 
             // Speaker notes
-            let notes_name = slide_name.replace("ppt/slides/slide", "ppt/notesSlides/notesSlide");
+            let notes_name = notes_slide_path(&mut archive, slide_name);
             if let Ok(notes_xml) = read_entry(&mut archive, &notes_name) {
                 let notes = extract_slide_content(&notes_xml)?;
                 let mut lines: Vec<Vec<Inline>> = Vec::new();
@@ -167,6 +170,43 @@ impl Converter for PowerPointConverter {
         }
 
         doc.write_markdown(writer)
+    }
+}
+
+/// The notes part of a slide: the one its relationships name, else the
+/// `notesSlideN` with the slide's own number.
+fn notes_slide_path(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, slide_name: &str) -> String {
+    let rels_name = slide_name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
+    let linked = read_entry(archive, &rels_name)
+        .ok()
+        .and_then(|xml| notes_target(&xml))
+        .map(|target| resolve_archive_path("ppt/slides/", &target));
+    linked.unwrap_or_else(|| slide_name.replace("ppt/slides/slide", "ppt/notesSlides/notesSlide"))
+}
+
+/// The target of the `notesSlide` relationship in a slide's `.rels` file.
+fn notes_target(rels_xml: &str) -> Option<String> {
+    let mut reader = Reader::from_str(rels_xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e))
+                if e.name().as_ref().ends_with("Relationship") =>
+            {
+                let (mut kind, mut target) = (None, None);
+                for attr in e.attributes().flatten() {
+                    match attr.key.as_ref() {
+                        "Type" => kind = Some(attr.value.to_string()),
+                        "Target" => target = Some(attr.value.to_string()),
+                        _ => {}
+                    }
+                }
+                if kind.is_some_and(|k| k.ends_with("/notesSlide")) {
+                    return target;
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            _ => {}
+        }
     }
 }
 
@@ -415,6 +455,15 @@ fn extract_slide_content(xml: &str) -> Result<SlideContent> {
                     cell_text.push_str(&decoded);
                 } else if in_text {
                     current_run.text.push_str(&decoded);
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                if let Some(decoded) = entity_text(&e) {
+                    if in_table_cell {
+                        cell_text.push_str(&decoded);
+                    } else if in_text {
+                        current_run.text.push_str(&decoded);
+                    }
                 }
             }
             Ok(Event::End(e)) => {
@@ -770,6 +819,34 @@ mod tests {
     }
 
     #[rstest]
+    fn test_speaker_notes_follow_the_slide_relationship() {
+        // Slide 1 owns notesSlide2 and slide 2 owns notesSlide1: the file
+        // numbers do not line up, so the names alone would swap them.
+        let s1 = slide_xml(&title_shape("First"));
+        let s2 = slide_xml(&title_shape("Second"));
+        let n1 = slide_xml(&body_shape("for second"));
+        let n2 = slide_xml(&body_shape("for first"));
+        let rels = |notes: &str| {
+            format!(
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/{notes}"/></Relationships>"#
+            )
+        };
+        let (r1, r2) = (rels("notesSlide2.xml"), rels("notesSlide1.xml"));
+        let pptx = make_pptx(&[
+            ("ppt/slides/slide1.xml", &s1),
+            ("ppt/slides/slide2.xml", &s2),
+            ("ppt/slides/_rels/slide1.xml.rels", &r1),
+            ("ppt/slides/_rels/slide2.xml.rels", &r2),
+            ("ppt/notesSlides/notesSlide1.xml", &n1),
+            ("ppt/notesSlides/notesSlide2.xml", &n2),
+        ]);
+        assert_eq!(
+            convert(&pptx),
+            "# First\n\n> **Notes**: for first\n\n---\n\n# Second\n\n> **Notes**: for second\n"
+        );
+    }
+
+    #[rstest]
     fn test_list_then_paragraph_and_slide_break() {
         let s1 = slide_xml(&format!(
             "{}{}",
@@ -977,5 +1054,12 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("no slide matches"), "{err}");
+    }
+
+    #[rstest]
+    fn test_xml_entities_in_text_are_kept() {
+        let slide = slide_xml(&title_shape("R&amp;D &lt;plan&gt;"));
+        let pptx = make_pptx(&[("ppt/slides/slide1.xml", &slide)]);
+        assert_eq!(convert(&pptx), "# R&D \\<plan>\n");
     }
 }

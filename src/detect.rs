@@ -7,6 +7,10 @@ pub enum Format {
     PowerPoint,
     Word,
     Image,
+    Ipynb,
+    Eml,
+    Odt,
+    Odp,
     Zip,
     Epub,
     Mobi,
@@ -54,6 +58,10 @@ impl Format {
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "tiff" | "tif" => {
                 Some(Self::Image)
             }
+            "ipynb" => Some(Self::Ipynb),
+            "eml" => Some(Self::Eml),
+            "odt" => Some(Self::Odt),
+            "odp" => Some(Self::Odp),
             "zip" => Some(Self::Zip),
             "epub" => Some(Self::Epub),
             "mobi" | "azw" | "azw3" | "prc" => Some(Self::Mobi),
@@ -159,7 +167,8 @@ impl Format {
                 feature = "word",
                 feature = "powerpoint",
                 feature = "excel",
-                feature = "epub"
+                feature = "epub",
+                feature = "opendocument"
             ))]
             return Self::detect_zip_content(bytes);
             #[cfg(not(any(
@@ -167,7 +176,8 @@ impl Format {
                 feature = "word",
                 feature = "powerpoint",
                 feature = "excel",
-                feature = "epub"
+                feature = "epub",
+                feature = "opendocument"
             )))]
             return Some(Self::Zip);
         }
@@ -180,14 +190,15 @@ impl Format {
         feature = "word",
         feature = "powerpoint",
         feature = "excel",
-        feature = "epub"
+        feature = "epub",
+        feature = "opendocument"
     ))]
     fn detect_zip_content(bytes: &[u8]) -> Option<Self> {
         let cursor = std::io::Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor).ok()?;
 
         for i in 0..archive.len() {
-            let entry = archive.by_index(i).ok()?;
+            let mut entry = archive.by_index(i).ok()?;
             let name = entry.name().ok()?.into_owned();
 
             if name.starts_with("word/") {
@@ -199,8 +210,19 @@ impl Format {
             if name.starts_with("xl/") {
                 return Some(Self::Excel);
             }
-            if name == "mimetype" || name == "META-INF/container.xml" {
+            if name == "META-INF/container.xml" {
                 return Some(Self::Epub);
+            }
+            // EPUB and OpenDocument both start with a `mimetype` entry.
+            if name == "mimetype" {
+                let mut mime = String::new();
+                let _ = std::io::Read::read_to_string(&mut entry, &mut mime);
+                return Some(match mime.trim() {
+                    "application/vnd.oasis.opendocument.text" => Self::Odt,
+                    "application/vnd.oasis.opendocument.presentation" => Self::Odp,
+                    "application/vnd.oasis.opendocument.spreadsheet" => Self::Excel,
+                    _ => Self::Epub,
+                });
             }
         }
 
@@ -216,6 +238,10 @@ impl Format {
             "powerpoint" => Some(Self::PowerPoint),
             "word" => Some(Self::Word),
             "image" => Some(Self::Image),
+            "ipynb" => Some(Self::Ipynb),
+            "eml" => Some(Self::Eml),
+            "odt" => Some(Self::Odt),
+            "odp" => Some(Self::Odp),
             "zip" => Some(Self::Zip),
             "epub" => Some(Self::Epub),
             "mobi" => Some(Self::Mobi),
@@ -250,6 +276,10 @@ impl std::fmt::Display for Format {
             Self::PowerPoint => write!(f, "powerpoint"),
             Self::Word => write!(f, "word"),
             Self::Image => write!(f, "image"),
+            Self::Ipynb => write!(f, "ipynb"),
+            Self::Eml => write!(f, "eml"),
+            Self::Odt => write!(f, "odt"),
+            Self::Odp => write!(f, "odp"),
             Self::Zip => write!(f, "zip"),
             Self::Epub => write!(f, "epub"),
             Self::Mobi => write!(f, "mobi"),
@@ -278,6 +308,51 @@ impl std::fmt::Display for Format {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_the_new_formats_by_extension() {
+        for (name, format) in [
+            ("a.ipynb", Format::Ipynb),
+            ("a.EML", Format::Eml),
+            ("a.odt", Format::Odt),
+            ("a.odp", Format::Odp),
+        ] {
+            assert_eq!(Format::detect(Some(name), b""), Some(format), "{name}");
+            assert_eq!(Format::from_name(&format.to_string()), Some(format));
+        }
+    }
+
+    #[cfg(feature = "zip")]
+    #[test]
+    fn zip_with_a_mimetype_entry_is_told_apart_by_its_content() {
+        use std::io::Write;
+        let zip_with_mimetype = |mime: &str| {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("mimetype", opts).unwrap();
+            zip.write_all(mime.as_bytes()).unwrap();
+            zip.finish().unwrap().into_inner()
+        };
+        for (mime, format) in [
+            ("application/vnd.oasis.opendocument.text", Format::Odt),
+            (
+                "application/vnd.oasis.opendocument.presentation",
+                Format::Odp,
+            ),
+            (
+                "application/vnd.oasis.opendocument.spreadsheet",
+                Format::Excel,
+            ),
+            ("application/epub+zip", Format::Epub),
+        ] {
+            assert_eq!(
+                Format::detect(None, &zip_with_mimetype(mime)),
+                Some(format),
+                "{mime}"
+            );
+        }
+    }
 
     #[test]
     fn detects_mobi() {

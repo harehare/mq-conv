@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 
 use quick_xml::Reader;
@@ -8,6 +8,7 @@ use crate::converter::{ConvertOptions, Converter};
 use crate::document::{Block, Builder, Document, Inline, trim_inlines};
 use crate::error::{Error, Result};
 use crate::formats::media::{MediaWriter, extract_related_images, parse_relationships};
+use crate::formats::xmlutil::entity_text;
 
 pub struct WordConverter;
 
@@ -41,19 +42,179 @@ impl Converter for WordConverter {
         let numbering = read_entry(&mut archive, "word/numbering.xml")
             .map(|xml| parse_numbering(&xml))
             .unwrap_or_default();
+        let notes = NoteDefs {
+            comments: read_entry(&mut archive, "word/comments.xml")
+                .map(|xml| parse_comments(&xml))
+                .unwrap_or_default(),
+            footnotes: read_entry(&mut archive, "word/footnotes.xml")
+                .map(|xml| parse_notes(&xml, "footnote"))
+                .unwrap_or_default(),
+            endnotes: read_entry(&mut archive, "word/endnotes.xml")
+                .map(|xml| parse_notes(&xml, "endnote"))
+                .unwrap_or_default(),
+        };
         let document_xml = read_entry(&mut archive, "word/document.xml")?;
 
-        parse_document(&document_xml, &rels, &numbering, &images)?.write_markdown(writer)
+        let ctx = Context {
+            rels: &rels,
+            numbering: &numbering,
+            images: &images,
+            notes: &notes,
+        };
+        parse_document(&document_xml, &ctx)?.write_markdown(writer)
     }
 }
 
-fn parse_document(
-    xml: &str,
-    rels: &HashMap<String, String>,
-    numbering: &HashMap<(String, u32), bool>,
-    images: &HashMap<String, String>,
-) -> Result<Document> {
+/// The comments, footnotes and endnotes of a document, by their ids.
+#[derive(Default)]
+struct NoteDefs {
+    comments: HashMap<String, Vec<Block>>,
+    footnotes: HashMap<String, Vec<Block>>,
+    endnotes: HashMap<String, Vec<Block>>,
+}
+
+/// What `parse_document` needs besides the XML itself.
+struct Context<'a> {
+    rels: &'a HashMap<String, String>,
+    numbering: &'a HashMap<(String, u32), bool>,
+    images: &'a HashMap<String, String>,
+    notes: &'a NoteDefs,
+}
+
+/// A `w:comment`, `w:footnote` or `w:endnote` element: its attributes and the
+/// XML between its tags.
+struct NoteElement {
+    id: String,
+    author: Option<String>,
+    date: Option<String>,
+    kind: Option<String>,
+    xml: String,
+}
+
+fn split_notes(xml: &str, element: &str) -> Vec<NoteElement> {
+    let mut reader = Reader::from_str(xml);
+    let mut found = Vec::new();
+    let mut open: Option<(NoteElement, usize)> = None;
+    loop {
+        let before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(e)) if local_name(e.name().as_ref()) == element => {
+                if let Some(id) = attr_value(&e, "id") {
+                    let note = NoteElement {
+                        id,
+                        author: attr_value(&e, "author"),
+                        date: attr_value(&e, "date"),
+                        kind: attr_value(&e, "type"),
+                        xml: String::new(),
+                    };
+                    open = Some((note, reader.buffer_position() as usize));
+                }
+            }
+            Ok(Event::End(e)) if local_name(e.name().as_ref()) == element => {
+                if let Some((mut note, start)) = open.take() {
+                    note.xml = xml.get(start..before).unwrap_or_default().to_string();
+                    found.push(note);
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The blocks of a note body. Notes hold no further notes, and their
+/// hyperlinks and images live in parts that are not read.
+fn note_blocks(xml: &str) -> Vec<Block> {
+    let empty_rels = HashMap::new();
+    let empty_numbering = HashMap::new();
+    let empty_images = HashMap::new();
+    let no_notes = NoteDefs::default();
+    let ctx = Context {
+        rels: &empty_rels,
+        numbering: &empty_numbering,
+        images: &empty_images,
+        notes: &no_notes,
+    };
+    let mut blocks = parse_document(xml, &ctx)
+        .map(|d| d.blocks)
+        .unwrap_or_default();
+    if let Some(Block::Paragraph(first)) = blocks.first_mut() {
+        trim_inlines(first);
+    }
+    blocks
+}
+
+/// Footnotes or endnotes by id; the separators Word stores are skipped.
+fn parse_notes(xml: &str, element: &str) -> HashMap<String, Vec<Block>> {
+    split_notes(xml, element)
+        .into_iter()
+        .filter(|n| n.kind.as_deref().is_none_or(|k| k == "normal"))
+        .map(|n| (n.id, note_blocks(&n.xml)))
+        .filter(|(_, blocks)| !blocks.is_empty())
+        .collect()
+}
+
+/// Comments by id, each starting with its author and date.
+fn parse_comments(xml: &str) -> HashMap<String, Vec<Block>> {
+    split_notes(xml, "comment")
+        .into_iter()
+        .map(|n| {
+            let mut blocks = note_blocks(&n.xml);
+            let mut head = Vec::new();
+            if let Some(author) = n.author.filter(|a| !a.is_empty()) {
+                head.push(Inline::Strong(vec![Inline::Text(author)]));
+            }
+            if let Some(date) = n.date.as_deref().and_then(|d| d.get(..10)) {
+                head.push(Inline::Text(format!(" ({date})")));
+            }
+            if !head.is_empty() {
+                head.push(Inline::Text(": ".to_string()));
+                match blocks.first_mut() {
+                    Some(Block::Paragraph(first)) => {
+                        first.splice(0..0, head);
+                    }
+                    _ => blocks.insert(0, Block::Paragraph(head)),
+                }
+            }
+            (n.id, blocks)
+        })
+        .filter(|(_, blocks)| !blocks.is_empty())
+        .collect()
+}
+
+/// A reference to note `id`, queuing its definition the first time.
+fn note_reference(
+    e: &quick_xml::events::BytesStart,
+    prefix: &str,
+    defs: &HashMap<String, Vec<Block>>,
+    emitted: &mut HashSet<String>,
+    queue: &mut Vec<Block>,
+) -> Option<Inline> {
+    let id = attr_value(e, "id")?;
+    let content = defs.get(&id)?;
+    let label = format!("{prefix}{id}");
+    if emitted.insert(label.clone()) {
+        queue.push(Block::Footnote {
+            label: label.clone(),
+            content: content.clone(),
+        });
+    }
+    Some(Inline::FootnoteRef(label))
+}
+
+fn parse_document(xml: &str, ctx: &Context) -> Result<Document> {
+    let Context {
+        rels,
+        numbering,
+        images,
+        notes,
+    } = ctx;
     let mut out = Builder::default();
+    let mut note_queue: Vec<Block> = Vec::new();
+    let mut emitted: HashSet<String> = HashSet::new();
+    // Inside w:del / w:moveFrom: tracked deletions, kept as struck-out text.
+    let mut in_deletion = false;
     let mut reader = Reader::from_str(xml);
 
     let mut in_paragraph = false;
@@ -95,6 +256,7 @@ fn parse_document(
                         current_num_id = None;
                     }
                     "r" => in_run = true,
+                    "del" | "moveFrom" => in_deletion = true,
                     "blip" => {
                         if let Some(image) = embedded_image(&e, images) {
                             if in_table_cell {
@@ -147,6 +309,24 @@ fn parse_document(
                             }
                         }
                     }
+                    "footnoteReference" | "endnoteReference" | "commentReference" => {
+                        let (prefix, defs) = match local.as_str() {
+                            "footnoteReference" => ("", &notes.footnotes),
+                            "endnoteReference" => ("e", &notes.endnotes),
+                            _ => ("c", &notes.comments),
+                        };
+                        if let Some(reference) =
+                            note_reference(&e, prefix, defs, &mut emitted, &mut note_queue)
+                        {
+                            if in_table_cell {
+                                cell.push(reference);
+                            } else if in_hyperlink {
+                                hyperlink_buf.push(reference);
+                            } else if in_paragraph {
+                                current.push(reference);
+                            }
+                        }
+                    }
                     "b" => is_bold = true,
                     "i" => is_italic = true,
                     "numPr" => is_list_item = true,
@@ -160,17 +340,36 @@ fn parse_document(
                     _ => {}
                 }
             }
-            Ok(Event::Text(e)) => {
+            Ok(event @ (Event::Text(_) | Event::GeneralRef(_))) => {
                 if in_run || in_table_cell {
-                    let text = e.to_string();
+                    // `&amp;` and friends arrive as events of their own.
+                    let text = match &event {
+                        Event::Text(e) => e.to_string(),
+                        Event::GeneralRef(r) => match entity_text(r) {
+                            Some(text) => text,
+                            None => continue,
+                        },
+                        _ => continue,
+                    };
                     if in_table_cell {
-                        cell.push(Inline::Text(text));
+                        let run = Inline::Text(text);
+                        push_run(
+                            &mut cell,
+                            if in_deletion {
+                                Inline::Strike(vec![run])
+                            } else {
+                                run
+                            },
+                        );
                     } else if in_paragraph && !text.is_empty() {
-                        let run = Inline::styled(text, is_bold, is_italic);
+                        let mut run = Inline::styled(text, is_bold, is_italic);
+                        if in_deletion {
+                            run = Inline::Strike(vec![run]);
+                        }
                         if in_hyperlink {
-                            hyperlink_buf.push(run);
+                            push_run(&mut hyperlink_buf, run);
                         } else {
-                            current.push(run);
+                            push_run(&mut current, run);
                         }
                     }
                 }
@@ -215,6 +414,7 @@ fn parse_document(
                         is_bold = false;
                         is_italic = false;
                     }
+                    "del" | "moveFrom" => in_deletion = false,
                     "hyperlink" => {
                         if in_hyperlink && !in_table_cell {
                             let content = std::mem::take(&mut hyperlink_buf);
@@ -263,7 +463,36 @@ fn parse_document(
     let _ = in_table;
     let _ = in_table_row;
 
-    Ok(out.finish())
+    let mut doc = out.finish();
+    doc.extend(note_queue);
+    Ok(doc)
+}
+
+/// Adds `run` to `target`, joining it to the run before when both carry the
+/// same marks: a run split at an entity or by Word is still one run.
+fn push_run(target: &mut Vec<Inline>, run: Inline) {
+    if let Some(last) = target.last_mut()
+        && merge_runs(last, &run)
+    {
+        return;
+    }
+    target.push(run);
+}
+
+fn merge_runs(last: &mut Inline, next: &Inline) -> bool {
+    match (last, next) {
+        (Inline::Text(a), Inline::Text(b)) => {
+            a.push_str(b);
+            true
+        }
+        (Inline::Strong(a), Inline::Strong(b))
+        | (Inline::Emphasis(a), Inline::Emphasis(b))
+        | (Inline::Strike(a), Inline::Strike(b)) => match (a.last_mut(), b.as_slice()) {
+            (Some(last), [next]) => merge_runs(last, next),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// The image for a `a:blip r:embed="rIdN"` element, if that image was extracted.
@@ -632,5 +861,86 @@ mod tests {
         // Without an image directory the image is simply omitted.
         let plain = convert(&docx);
         assert!(!plain.contains("!["), "{plain}");
+    }
+
+    fn make_docx_parts(parts: &[(&str, String)]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in parts {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(data.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+    #[test]
+    fn test_tracked_changes_keep_deletions_struck_out() {
+        let body = r#"<w:p><w:r><w:t xml:space="preserve">Keep </w:t></w:r><w:del w:id="1" w:author="A"><w:r><w:delText>gone</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#;
+        let out = convert(&make_docx(&doc_xml(body), None));
+        assert_eq!(out, "Keep ~~gone~~added\n");
+    }
+
+    #[test]
+    fn test_paragraph_mark_revision_is_not_a_deletion() {
+        let body = r#"<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A"/></w:rPr></w:pPr><w:r><w:t>Still here</w:t></w:r></w:p>"#;
+        let out = convert(&make_docx(&doc_xml(body), None));
+        assert_eq!(out, "Still here\n");
+    }
+
+    #[test]
+    fn test_comments_become_footnotes_with_author_and_date() {
+        let body = r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Reviewed</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#;
+        let comments = format!(
+            r#"<w:comments {W_NS}><w:comment w:id="0" w:author="Alice" w:date="2024-05-06T07:08:00Z"><w:p><w:r><w:t>Please check</w:t></w:r></w:p></w:comment></w:comments>"#
+        );
+        let docx = make_docx_parts(&[
+            ("word/document.xml", doc_xml(body)),
+            ("word/comments.xml", comments),
+        ]);
+        assert_eq!(
+            convert(&docx),
+            "Reviewed[^c0]\n\n[^c0]: **Alice** (2024-05-06): Please check\n"
+        );
+    }
+
+    #[test]
+    fn test_footnotes_and_endnotes_skip_separators() {
+        let body = r#"<w:p><w:r><w:t>Claim</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r><w:r><w:t> and more</w:t></w:r><w:r><w:endnoteReference w:id="1"/></w:r></w:p>"#;
+        let footnotes = format!(
+            r#"<w:footnotes {W_NS}>
+<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> See the source.</w:t></w:r></w:p></w:footnote>
+</w:footnotes>"#
+        );
+        let endnotes = format!(
+            r#"<w:endnotes {W_NS}><w:endnote w:id="1"><w:p><w:r><w:t>Ended.</w:t></w:r></w:p></w:endnote></w:endnotes>"#
+        );
+        let docx = make_docx_parts(&[
+            ("word/document.xml", doc_xml(body)),
+            ("word/footnotes.xml", footnotes),
+            ("word/endnotes.xml", endnotes),
+        ]);
+        assert_eq!(
+            convert(&docx),
+            "Claim[^1] and more[^e1]\n\n[^1]: See the source.\n\n[^e1]: Ended.\n"
+        );
+    }
+
+    #[test]
+    fn test_reference_without_a_definition_is_dropped() {
+        let body =
+            r#"<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="9"/></w:r></w:p>"#;
+        let out = convert(&make_docx(&doc_xml(body), None));
+        assert_eq!(out, "Text\n");
+    }
+
+    #[test]
+    fn test_xml_entities_in_text_are_kept() {
+        let body = r#"<w:p><w:r><w:t>Tom &amp; Jerry &lt;3 &#x41;</w:t></w:r></w:p>"#;
+        let out = convert(&make_docx(&doc_xml(body), None));
+        assert_eq!(out, "Tom & Jerry \\<3 A\n");
     }
 }

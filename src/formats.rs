@@ -2,12 +2,16 @@
 pub mod asciidoc;
 #[cfg(feature = "audio")]
 pub mod audio;
+#[cfg(feature = "eml")]
+pub mod eml;
 #[cfg(feature = "epub")]
 pub mod epub;
 #[cfg(feature = "excel")]
 pub mod excel;
 #[cfg(feature = "image")]
 pub mod image;
+#[cfg(feature = "ipynb")]
+pub mod ipynb;
 #[cfg(feature = "markdown_asciidoc")]
 pub mod markdown_asciidoc;
 #[cfg(feature = "markdown_docx")]
@@ -33,6 +37,8 @@ pub mod mediawiki;
 pub mod mobi;
 #[cfg(feature = "ocr")]
 pub mod ocr;
+#[cfg(feature = "opendocument")]
+pub mod opendocument;
 #[cfg(feature = "org")]
 pub mod org;
 #[cfg(feature = "pdf")]
@@ -49,6 +55,8 @@ pub mod tar;
 pub mod video;
 #[cfg(feature = "word")]
 pub mod word;
+#[cfg(any(feature = "word", feature = "powerpoint", feature = "opendocument"))]
+pub mod xmlutil;
 #[cfg(feature = "zip")]
 pub mod zip;
 
@@ -81,6 +89,26 @@ pub fn get_converter(format: Format) -> crate::error::Result<Box<dyn Converter>>
         Format::Image => Ok(Box::new(image::ImageConverter)),
         #[cfg(not(feature = "image"))]
         Format::Image => Err(crate::error::Error::FeatureDisabled("image".into())),
+
+        #[cfg(feature = "eml")]
+        Format::Eml => Ok(Box::new(eml::EmlConverter)),
+        #[cfg(not(feature = "eml"))]
+        Format::Eml => Err(crate::error::Error::FeatureDisabled("eml".into())),
+
+        #[cfg(feature = "opendocument")]
+        Format::Odt => Ok(Box::new(opendocument::OdtConverter)),
+        #[cfg(not(feature = "opendocument"))]
+        Format::Odt => Err(crate::error::Error::FeatureDisabled("opendocument".into())),
+
+        #[cfg(feature = "opendocument")]
+        Format::Odp => Ok(Box::new(opendocument::OdpConverter)),
+        #[cfg(not(feature = "opendocument"))]
+        Format::Odp => Err(crate::error::Error::FeatureDisabled("opendocument".into())),
+
+        #[cfg(feature = "ipynb")]
+        Format::Ipynb => Ok(Box::new(ipynb::IpynbConverter)),
+        #[cfg(not(feature = "ipynb"))]
+        Format::Ipynb => Err(crate::error::Error::FeatureDisabled("ipynb".into())),
 
         #[cfg(feature = "zip")]
         Format::Zip => Ok(Box::new(zip::ZipConverter)),

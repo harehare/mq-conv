@@ -43,6 +43,12 @@ pub enum Block {
     Markdown(String),
     /// Rows of cells; the first row is the header.
     Table(Vec<Vec<Vec<Inline>>>),
+    /// The definition of a footnote, `[^label]: ...`. Comments and notes
+    /// from the source are written the same way.
+    Footnote {
+        label: String,
+        content: Vec<Block>,
+    },
 }
 
 /// An inline element.
@@ -61,6 +67,8 @@ pub enum Inline {
         url: String,
         alt: String,
     },
+    /// A reference to a [`Block::Footnote`], `[^label]`.
+    FootnoteRef(String),
     /// A hard line break.
     Break,
 }
@@ -109,6 +117,7 @@ pub fn plain_text(content: &[Inline]) -> String {
             Inline::Emphasis(i) | Inline::Strong(i) | Inline::Strike(i) => plain_text(i),
             Inline::Link { content, .. } => plain_text(content),
             Inline::Image { alt, .. } => alt.clone(),
+            Inline::FootnoteRef(_) => String::new(),
             Inline::Break => " ".to_string(),
         })
         .collect()
@@ -309,7 +318,43 @@ fn render_block(block: &Block) -> String {
         Block::Rule => "---\n".to_string(),
         Block::Markdown(text) => format!("{}\n", text.trim()),
         Block::Table(rows) => render_table(rows),
+        Block::Footnote { label, content } => render_footnote(label, content),
     }
+}
+
+/// `[^label]: first line`, with the rest indented so it stays in the note.
+fn render_footnote(label: &str, content: &[Block]) -> String {
+    let body = render_blocks(content);
+    let mut out = String::new();
+    for (i, line) in body.trim_end().lines().enumerate() {
+        match (i, line.is_empty()) {
+            (0, _) => out.push_str(&format!("[^{}]: {line}", footnote_label(label))),
+            (_, true) => {}
+            (_, false) => {
+                out.push_str("    ");
+                out.push_str(line);
+            }
+        }
+        out.push('\n');
+    }
+    if out.is_empty() {
+        out = format!("[^{}]:\n", footnote_label(label));
+    }
+    out
+}
+
+/// A label holds no spaces, brackets or carets.
+fn footnote_label(label: &str) -> String {
+    label
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() || matches!(c, '[' | ']' | '^') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 fn render_list(ordered: bool, start: usize, items: &[Vec<Block>]) -> String {
@@ -439,6 +484,9 @@ fn inlines(content: &[Inline], in_cell: bool) -> String {
                     destination(url)
                 ));
             }
+            Inline::FootnoteRef(label) => {
+                out.push_str(&format!("[^{}]", footnote_label(label)));
+            }
             Inline::Image { url, alt } => {
                 out.push_str(&format!(
                     "![{}]({})",
@@ -563,6 +611,18 @@ mod tests {
             Block::paragraph("second"),
         ]);
         assert_eq!(markdown(&d), "# Title\n\nfirst\n\nsecond\n");
+    }
+
+    #[test]
+    fn footnotes_are_referenced_and_defined() {
+        let d = doc(vec![
+            Block::Paragraph(vec![t("Text"), Inline::FootnoteRef("1".into())]),
+            Block::Footnote {
+                label: "1".into(),
+                content: vec![Block::paragraph("first"), Block::paragraph("second")],
+            },
+        ]);
+        assert_eq!(markdown(&d), "Text[^1]\n\n[^1]: first\n\n    second\n");
     }
 
     #[test]

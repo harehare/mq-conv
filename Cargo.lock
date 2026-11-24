@@ -322,7 +322,7 @@ dependencies = [
  "log",
  "quick-xml 0.42.0",
  "serde",
- "zip 9.6.1",
+ "zip 9.8.1",
 ]
 
 [[package]]
@@ -1813,7 +1813,7 @@ dependencies = [
  "thiserror 2.0.21",
  "uuid",
  "wasm-bindgen",
- "zip 9.6.1",
+ "zip 9.8.1",
 ]
 
 [[package]]
@@ -3694,9 +3694,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.6.1"
+version = "9.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "953a376f4930ed5af88e1e65948385f76866b45e7f75b21ac275327d0eeb9b46"
+checksum = "a9534624d547e3f516ecde0ed9a70d37788f01d340efcfdd03bf3ea8e163c1d0"
 dependencies = [
  "constant_time_eq",
  "crc32fast",
